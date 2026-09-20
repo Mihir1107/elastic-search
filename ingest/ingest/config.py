@@ -33,6 +33,7 @@ class IngestSettings(BaseSettings):
     embed_batch_size: int = 64
     chunk_tokens: int = 200
     chunk_overlap: int = 40
+    max_chunks: int = 8
 
     # Corpus source (verified live 2026-09-20; 443,254,787 bytes).
     enron_url: str = "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
@@ -53,6 +54,34 @@ class IngestSettings(BaseSettings):
     @property
     def stats_dir(self) -> Path:
         return self.data_dir / "stats"
+
+    @property
+    def mappings_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "mappings" / "emails.json"
+
+    @property
+    def maildir(self) -> Path:
+        return self.raw_dir / "maildir"
+
+    @property
+    def parsed_path(self) -> Path:
+        return self.interim_dir / "parsed.jsonl"
+
+    @property
+    def normalised_path(self) -> Path:
+        return self.interim_dir / "normalised.jsonl"
+
+    @property
+    def deduped_path(self) -> Path:
+        return self.interim_dir / "deduped.jsonl"
+
+    @property
+    def threaded_path(self) -> Path:
+        return self.interim_dir / "threaded.jsonl"
+
+    @property
+    def embedded_path(self) -> Path:
+        return self.interim_dir / "embedded.jsonl"
 
     @property
     def index_name(self) -> str:

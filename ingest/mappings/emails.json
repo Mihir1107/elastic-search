@@ -1,0 +1,87 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "analysis": {
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase", "trim"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "message_id": { "type": "keyword" },
+      "in_reply_to": { "type": "keyword" },
+      "references": { "type": "keyword" },
+      "thread_id": { "type": "keyword" },
+
+      "from": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": { "text": { "type": "text", "analyzer": "standard" } }
+      },
+      "to": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": { "text": { "type": "text", "analyzer": "standard" } }
+      },
+      "cc": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": { "text": { "type": "text", "analyzer": "standard" } }
+      },
+      "bcc": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": { "text": { "type": "text", "analyzer": "standard" } }
+      },
+      "from_name": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+      "person_id": { "type": "keyword" },
+
+      "subject": {
+        "type": "text",
+        "analyzer": "english",
+        "fields": { "exact": { "type": "text", "analyzer": "standard" } }
+      },
+      "body": {
+        "type": "text",
+        "analyzer": "english",
+        "fields": { "exact": { "type": "text", "analyzer": "standard" } }
+      },
+      "quoted_text": { "type": "text", "analyzer": "english" },
+
+      "date": {
+        "type": "date",
+        "format": "strict_date_optional_time||yyyy-MM-dd||epoch_millis"
+      },
+
+      "mailboxes": { "type": "keyword" },
+      "folder": { "type": "keyword" },
+      "source_paths": { "type": "keyword", "index": false },
+      "duplicate_count": { "type": "integer" },
+
+      "has_attachment": { "type": "boolean" },
+      "attachment_names": { "type": "keyword" },
+
+      "chunks": {
+        "type": "nested",
+        "properties": {
+          "text": { "type": "text", "analyzer": "english" },
+          "vector": {
+            "type": "dense_vector",
+            "dims": 384,
+            "index": true,
+            "similarity": "cosine"
+          }
+        }
+      }
+    }
+  }
+}

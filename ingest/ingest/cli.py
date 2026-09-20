@@ -1,72 +1,129 @@
-"""Ledger ingestion CLI (typer).
+"""Ledger ingestion CLI.
 
-Phase 0 wires the command surface; each stage is implemented in Phase 1
-(CLAUDE_CODE_KICKOFF.md §5). Every stage is designed to be resumable and
-idempotent and to write ``data/stats/<stage>.json``.
+Each stage is resumable and idempotent and writes ``data/stats/<stage>.json``
+(CLAUDE_CODE_KICKOFF.md section 5). Heavy imports (sentence-transformers,
+elasticsearch) are done inside the commands so ``--help`` stays fast.
 """
 
 from __future__ import annotations
 
 import typer
 
+from ingest.config import get_settings
+
 app = typer.Typer(help="Ledger ingestion pipeline", no_args_is_help=True)
 
-_PHASE1 = "not implemented yet (arrives in Phase 1)"
+_SUBSET = typer.Option("dev", "--subset", help="'dev' (deterministic sample) or 'full'")
 
 
-def _todo(stage: str) -> None:
-    typer.secho(f"[{stage}] {_PHASE1}", fg=typer.colors.YELLOW)
-    raise typer.Exit(code=1)
+def _emit(stats: object) -> None:
+    summary = getattr(stats, "summary", None)
+    if callable(summary):
+        typer.echo(summary())
 
 
 @app.command()
-def download() -> None:
+def download(
+    force: bool = typer.Option(False, "--force", help="Re-download and re-extract."),
+) -> None:
     """Fetch + checksum + extract the Enron corpus into data/raw/."""
-    _todo("download")
+    from ingest.download import download as run_download
+
+    settings = get_settings()
+    stats = run_download(settings, force=force)
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
-def parse() -> None:
+def parse(subset: str = _SUBSET) -> None:
     """Parse maildir messages with the email stdlib into parsed.jsonl."""
-    _todo("parse")
+    from ingest import parse as parse_stage
+
+    settings = get_settings()
+    stats = parse_stage.run(
+        settings.maildir, settings.parsed_path, subset, settings.dev_subset_size
+    )
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
 def normalise() -> None:
-    """Lowercase/dedupe addresses; assign person_id."""
-    _todo("normalise")
+    """Lowercase/dedupe addresses and assign person_id."""
+    from ingest import normalise as normalise_stage
+
+    settings = get_settings()
+    stats = normalise_stage.run(settings.parsed_path, settings.normalised_path)
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
 def dedupe() -> None:
-    """Collapse cross-mailbox duplicates into one canonical doc."""
-    _todo("dedupe")
+    """Collapse cross-mailbox duplicates into one canonical document."""
+    from ingest import dedupe as dedupe_stage
+
+    settings = get_settings()
+    stats = dedupe_stage.run(settings.normalised_path, settings.deduped_path)
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
 def thread() -> None:
-    """Assign thread_id from Message-ID/In-Reply-To with a subject fallback."""
-    _todo("thread")
+    """Assign thread_id from reply headers with a subject fallback."""
+    from ingest import thread as thread_stage
+
+    settings = get_settings()
+    stats = thread_stage.run(settings.deduped_path, settings.threaded_path)
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
 def embed() -> None:
-    """Chunk bodies and compute vectors in batches (resumable, overnight-safe)."""
-    _todo("embed")
+    """Chunk bodies and compute vectors in batches (resumable)."""
+    from ingest import embed as embed_stage
+
+    settings = get_settings()
+    stats = embed_stage.run(settings.threaded_path, settings.embedded_path, settings)
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
 def index() -> None:
     """Bulk into the versioned index; flip the alias after count + smoke query."""
-    _todo("index")
+    from ingest import index as index_stage
+    from ingest.es import make_client
+
+    settings = get_settings()
+    es = make_client(settings)
+    try:
+        stats = index_stage.run(
+            es,
+            settings.embedded_path,
+            settings.mappings_path,
+            settings.index_name,
+            settings.emails_alias,
+        )
+    finally:
+        es.close()
+    stats.write(settings.stats_dir)
+    _emit(stats)
 
 
 @app.command()
-def run(
-    subset: str = typer.Option("dev", help="'dev' (10k deterministic) or 'full'"),
-) -> None:
+def run(subset: str = _SUBSET) -> None:
     """Run every stage end to end."""
-    _todo(f"run:{subset}")
+    download()
+    parse(subset=subset)
+    normalise()
+    dedupe()
+    thread()
+    embed()
+    index()
 
 
 if __name__ == "__main__":

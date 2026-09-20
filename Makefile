@@ -37,6 +37,18 @@ health:  ## Show cluster health + license tier
 down:  ## Stop everything and remove volumes
 	$(COMPOSE) --profile single --profile kibana down -v
 
+ingest-dev:  ## Run the whole pipeline over the deterministic 10k dev subset
+	$(UV) run python -m ingest.cli run --subset dev
+
+ingest-full:  ## Run the whole pipeline over the entire corpus
+	$(UV) run python -m ingest.cli run --subset full
+
+spotcheck:  ## Compare 20 parsed documents against their raw maildir files
+	$(UV) run python scripts/spotcheck.py
+
+stats:  ## Print the per-stage ingestion stats
+	@for f in data/stats/*.json; do echo "--- $$f"; cat $$f; done
+
 lint:  ## ruff check
 	$(UV) run ruff check .
 
@@ -58,4 +70,4 @@ test-integration:  ## Integration tests (needs Docker for testcontainers)
 test-all:  ## All tests
 	$(UV) run pytest
 
-.PHONY: help preflight install up up-single up-kibana certs health down lint format format-check typecheck test test-integration test-all
+.PHONY: help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats lint format format-check typecheck test test-integration test-all

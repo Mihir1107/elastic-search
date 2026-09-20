@@ -409,11 +409,28 @@ like an instrumentation bug and is not one.
   **6.6 ms bare, 26.2 ms with highlighting and facets**.
 - **Fix:** `asyncio.to_thread` for both the embedder and the cross-encoder. torch releases the
   GIL inside the forward pass, so a worker thread genuinely overlaps with the loop's I/O.
-- **Measured after:** concurrency 4 wall p50 89.0 -> **74.2 ms**, p95 172.1 -> **154.7 ms**;
-  concurrency 8 p50 159.6 -> **140.5 ms**; `bm25_ms` p50 at concurrency 8 76.3 -> **29.3 ms**.
-  `eval.cli check` unchanged at 0.8775 (delta +0.0000).
+- **Measured A/B** on `emails-v2` (52,219 docs), same process started twice in production mode,
+  the only difference being this change:
+
+  | concurrency | | before | after |
+  |---|---|---:|---:|
+  | 1 | p50 / p95 | 43.1 / 123.3 ms | 48.6 / 131.6 ms |
+  | 4 | p50 / p95 | 88.1 / 165.8 ms | **70.8** / **157.6 ms** |
+  | 8 | p50 / p95 / p99 | 152.1 / 249.3 / 322.1 ms | **144.0** / 248.9 / **277.8 ms** |
+  | 8 | `bm25_ms` p50 | 78.6 ms | **35.2 ms** |
+
+- **It is not free.** At concurrency 1 the change is ~5 ms *worse*: the thread handoff costs
+  something and there is no contention to amortise it against. It earns its keep from
+  concurrency 4 upward, which is the condition that matters for a served API, and it fixes the
+  stage attribution at every level — `bm25_ms` no longer absorbs other requests' encoding.
 - What remains is real compute: several concurrent encodes saturate the CPU. That is a capacity
   limit, not a bug.
+- **Method note:** the first "after" figures taken for this entry were measured against a stale
+  `uvicorn --reload` process left running by an earlier shell, which `pkill -f "uvicorn
+  app.main:app"` never matched because its command line reads `uvicorn api.app.main:app`. Reload
+  mode did pick up the edit so the comparison happened to hold, but a reload supervisor is not a
+  representative thing to benchmark. The table above replaces those numbers and was taken with
+  exactly one listener on the port, verified with `lsof`.
 
 ## F12 — Highlight tuning is a dead end; the cost is per document, not per fragment
 Measured directly against Elasticsearch, same BM25 query, varying one thing at a time:
@@ -439,3 +456,61 @@ deeper. Two consequences worth recording:
 - An evaluation sweep over `fusion_window` (200/150/100/75/50) returned **byte-identical
   metrics**, because the harness runs at `size=50` and `min(50, fusion_window)` is 50 for all of
   them. The sweep proved nothing and was discarded rather than reported as "no relevance cost".
+
+## D31 — The Phase 6 corpus is `emails-v2`: 100,000 messages, 52,219 unique documents
+Ingested with `DEV_SUBSET_SIZE=100000 INDEX_VERSION=v2`, no code change to the pipeline.
+31 mailboxes (a deterministic superset of the 5 in the dev subset), 108,322 files extracted,
+100,000 parsed with 5 skips (1 date-missing, 3 from-missing, 1 message-id-missing), 0 failures
+at every stage. 87,428 chunk vectors. **307.4 MB primaries / 614.8 MB with the replica.**
+
+Verified before the alias moved: count 52,219 == expected, smoke query returned hits, 10,000/10,000
+sampled documents carried vectors. `emails-v1` is still on disk as the rollback.
+
+Extrapolating the measured footprint to the full corpus gives ~2.2 GB primaries / ~4.5 GB with a
+replica, which confirms the D27 projection and, again, that disk was never the obstacle to a full
+ingest — time and dedupe memory were.
+
+## F14 — Growing the corpus invalidates the judged pool, and the gate cannot tell that apart from a regression
+Running `eval.cli check` against `emails-v2` with the `emails-v1` baseline reported
+**hybrid NDCG@10 0.8775 -> 0.4908, delta -0.3867** and exited 1. Nothing about the ranking got
+worse. The pool is the union of each method's top 20 over the *old* corpus, so the larger index
+surfaces documents that were never judged, and an unjudged document scores 0.
+
+This is a property of pooled evaluation, not a bug, but it is a trap: the regression gate's
+output is indistinguishable from a genuine relevance collapse. **Re-pool and re-baseline as part
+of any corpus change** — `make eval-pool` then `make eval-baseline`. Because judgments are keyed
+on content-hash document ids and the rules are objective (D19), that is automatic for the 38
+rule-judged queries; 1,242 new pairs were auto-graded and qrels grew 1,135 -> 1,832.
+
+## F15 — At 52k documents BM25 overtakes hybrid on the judged set
+| method | dev subset (7,355 docs) | emails-v2 (52,219 docs) |
+|---|---:|---:|
+| bm25 | 0.8300 | **0.9087** |
+| vector | 0.5911 | 0.6369 |
+| hybrid | 0.8775 | 0.8992 |
+| hybrid+rerank | 0.8401 | 0.8873 |
+
+Hybrid improved, but BM25 improved more and now leads it by 0.0095 NDCG@10. **This is not
+evidence that fusion is not worth it**, and should not be acted on as if it were: the 38 judged
+queries are graded by phrase / sender / date rules (D19), which is exactly what BM25 is good at,
+and a bigger corpus gives those rules more true positives to find. The vector leg's contribution
+is measured entirely on its worst terrain, as HANDOFF §3.5 warned.
+
+The 12 conceptual queries remain unlabelled, and they are the ones that would test the other
+side. Until they are labelled, the honest statement is "BM25 leads on a lexically-graded query
+set", not "hybrid is not worth it". Note also that reranking's penalty shrank from **-0.037 to
+-0.0119** NDCG@10 at this scale, which is the direction D25 predicted it would move.
+
+## F16 — Latency barely moved with a 7x larger corpus
+`emails-v1` (7,355 docs) vs `emails-v2` (52,219 docs), concurrency 4: wall p95 **154.7 ms ->
+157.8 ms**. This is the empirical confirmation of the argument in D27: per-query cost is
+dominated by the number of documents fetched and highlighted (a page), not by how many documents
+exist. It is also why the 100k corpus is a sound basis for the latency claim even though it is
+not the full archive.
+
+## F17 — Recovery, not the outage, is the latency cost
+Chaos on `emails-v2`, killing `es03` (the node holding the most primaries): p95 **156.2 ms
+before, 172.9 ms during the outage, 337.4 ms after the restart**. The expensive phase is shard
+recovery competing for I/O, not the degraded cluster. Steady-state p95 is unaffected, and no
+request failed in any phase — but "after" is the window where a naive benchmark would record a
+breach of the 300 ms target.

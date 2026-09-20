@@ -1,0 +1,90 @@
+{
+  "written_at": "2026-09-20T21:04:12.780837+00:00",
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "concurrency": 4,
+    "iterations": 6,
+    "warmup": 5,
+    "size": null,
+    "rerank": false,
+    "timeout_s": 30.0
+  },
+  "context": {
+    "index": "emails-v2",
+    "docs": 52219,
+    "elasticsearch": "green",
+    "license": "basic",
+    "nodes": 3
+  },
+  "requests": 300,
+  "failed": 0,
+  "success_rate": 1.0,
+  "wall_ms": {
+    "n": 300,
+    "mean": 95.9,
+    "p50": 83.7,
+    "p95": 190.3,
+    "p99": 225.2,
+    "max": 272.0
+  },
+  "stages_ms": {
+    "parse_ms": {
+      "n": 300,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.1,
+      "max": 0.1
+    },
+    "embed_ms": {
+      "n": 300,
+      "mean": 31.8,
+      "p50": 35.0,
+      "p95": 56.7,
+      "p99": 62.9,
+      "max": 68.6
+    },
+    "bm25_ms": {
+      "n": 300,
+      "mean": 47.4,
+      "p50": 28.9,
+      "p95": 131.3,
+      "p99": 160.2,
+      "max": 227.2
+    },
+    "knn_ms": {
+      "n": 300,
+      "mean": 14.0,
+      "p50": 13.2,
+      "p95": 28.1,
+      "p99": 43.6,
+      "max": 53.5
+    },
+    "fuse_ms": {
+      "n": 300,
+      "mean": 0.1,
+      "p50": 0.1,
+      "p95": 0.2,
+      "p99": 0.3,
+      "max": 0.7
+    },
+    "rerank_ms": {
+      "n": 300,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    },
+    "total_ms": {
+      "n": 300,
+      "mean": 93.4,
+      "p50": 80.7,
+      "p95": 187.4,
+      "p99": 222.6,
+      "max": 268.8
+    }
+  },
+  "p95_target_ms": 300.0,
+  "p95_target_met": true
+}

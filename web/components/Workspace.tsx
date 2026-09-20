@@ -39,6 +39,9 @@ interface Props {
   onRange: (after: string | undefined, before: string | undefined) => void;
   onAttachments: (v: boolean | undefined) => void;
   onClearFilters: () => void;
+  /** Cross-encoder reranking, exposed because it is a request flag on /search. */
+  rerank: boolean;
+  onRerank: (v: boolean) => void;
   lens: Lens;
   onLens: (l: Lens) => void;
   open: EmailHit | null;
@@ -133,7 +136,10 @@ export function Workspace(p: Props) {
               <span className="text-[var(--color-faint)]">&rdquo;</span>
             </h1>
           </div>
-          {data && <TimingNote timing={data.timing} />}
+          <div className="flex shrink-0 items-center gap-2">
+            <RerankToggle on={p.rerank} onChange={p.onRerank} />
+            {data && <TimingNote timing={data.timing} />}
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
@@ -307,3 +313,42 @@ function Empty({
 }
 
 export { count };
+
+/**
+ * Turns on the cross-encoder pass.
+ *
+ * It is a flag on /search rather than the default because it costs 100-200ms
+ * and, measured against the judged query set, it trades top-10 ordering for a
+ * better first hit (DECISIONS D25). The API skips it when the query carries an
+ * explicit precision signal, so the label says so rather than promising a
+ * change that will not happen.
+ */
+function RerankToggle({
+  on,
+  onChange,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!on)}
+      aria-pressed={on}
+      title="Re-score the top 50 results with a local cross-encoder. Adds 100-200ms, and is skipped for quoted phrases and field operators."
+      style={on ? { color: "var(--color-surface)" } : undefined}
+      className={[
+        "meta flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors",
+        on
+          ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
+          : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
+      ].join(" ")}
+    >
+      <span
+        className="size-1.5 rounded-full"
+        style={{ background: on ? "#c08a2e" : "var(--color-faint)" }}
+        aria-hidden
+      />
+      Rerank
+    </button>
+  );
+}

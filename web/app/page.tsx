@@ -30,6 +30,7 @@ export default function Page() {
   const [lens, setLens] = useState<Lens>("emails");
   const [view, setView] = useState<View>("search");
   const [typing, setTyping] = useState(false);
+  const [rerank, setRerank] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
 
@@ -45,7 +46,7 @@ export default function Page() {
   const { data, loading, error, loadingMore, loadMore } = useSearch(
     active,
     filters,
-    false,
+    rerank,
     searching,
   );
 
@@ -198,6 +199,8 @@ export default function Page() {
                 setFacetFilters((f) => ({ ...f, has_attachment: v }))
               }
               onClearFilters={() => setFacetFilters({})}
+              rerank={rerank}
+              onRerank={setRerank}
               lens={lens}
               onLens={setLens}
               open={open}

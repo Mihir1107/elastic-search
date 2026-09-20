@@ -1,0 +1,47 @@
+# Ledger — uv workspace root (virtual: not itself a package).
+# Members share ONE .venv, so heavy deps (torch via sentence-transformers) install once.
+[project]
+name = "ledger"
+version = "0.0.0"
+description = "Ledger — email investigation search on Elasticsearch"
+requires-python = ">=3.12,<3.13"
+
+[tool.uv.workspace]
+members = ["api", "ingest"]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+  "ruff==0.16.8",
+  "mypy==2.3.1",
+  "pytest==9.1.1",
+  "testcontainers==4.15.0",
+  "pre-commit==4.6.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["api", "ingest"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["sentence_transformers.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: requires a running Elasticsearch (deselect with -m 'not integration')",
+]
+testpaths = ["api/tests", "ingest/tests"]
+addopts = "-ra"

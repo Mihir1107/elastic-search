@@ -2,12 +2,21 @@
 
 Both legs carry the same filters, fusion is manual RRF (k=60), and every stage
 is timed so the response can show where the milliseconds went.
+
+Pagination consistency: each page re-runs the search, and with replicas the
+coordinating node may pick a different shard copy each time. Copies hold the
+same documents but lay them out in different segments, so equal-scoring hits
+come back in a different order and an offset-based page can repeat or skip
+results. Two things pin the order down: a ``preference`` derived from the query
+(so every page of one search reads the same copies) and an explicit tiebreaker
+on the unique ``message_id`` (so equal scores still have one total order).
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import logging
 from time import perf_counter
@@ -69,6 +78,11 @@ def decode_page_token(token: str | None) -> int:
     except (ValueError, KeyError, TypeError, binascii.Error):
         return 0
     return max(0, offset)
+
+
+def _preference_for(raw_query: str) -> str:
+    """Stable shard-copy preference so all pages of one search agree."""
+    return "ledger-" + hashlib.sha1(raw_query.encode("utf-8")).hexdigest()[:16]
 
 
 def _understood(query: ParsedQuery) -> Understood:
@@ -149,12 +163,16 @@ async def run_search(
         "aggs": facets_mod.build_aggs(),
         "track_total_hits": True,
     }
-    # A pure filter query has no relevance signal, so order by recency instead.
-    if not parsed.has_text:
-        request["sort"] = [{"date": {"order": "desc", "missing": "_last"}}]
+    tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
+    if parsed.has_text:
+        request["sort"] = [{"_score": {"order": "desc"}}, tiebreak]
+    else:
+        # A pure filter query has no relevance signal, so order by recency.
+        request["sort"] = [{"date": {"order": "desc", "missing": "_last"}}, tiebreak]
 
+    preference = _preference_for(q)
     t0 = perf_counter()
-    bm25_response = await es.search(index=settings.emails_alias, **request)
+    bm25_response = await es.search(index=settings.emails_alias, preference=preference, **request)
     timings.bm25_ms = round((perf_counter() - t0) * 1000, 2)
 
     legs: dict[str, list[dict[str, Any]]] = {"bm25": bm25_response["hits"]["hits"]}
@@ -170,6 +188,7 @@ async def run_search(
             knn=build_knn(vector, filters, window, settings.knn_num_candidates),
             size=window,
             source={"includes": _SOURCE_FIELDS},
+            preference=preference,
         )
         timings.knn_ms = round((perf_counter() - t0) * 1000, 2)
         legs["knn"] = knn_response["hits"]["hits"]

@@ -95,16 +95,39 @@ def test_filters_apply_to_both_legs(client: TestClient) -> None:
 
 
 def test_pagination_walks_without_repeating(client: TestClient) -> None:
-    first = client.get("/search", params={"q": "enron", "size": 5}).json()
-    assert first["next_page_token"]
-    second = client.get(
-        "/search",
-        params={"q": "enron", "size": 5, "page_token": first["next_page_token"]},
-    ).json()
-    ids_1 = {h["id"] for h in first["hits"]}
-    ids_2 = {h["id"] for h in second["hits"]}
-    assert ids_1 and ids_2
-    assert not (ids_1 & ids_2), "page 2 repeated results from page 1"
+    """Walk several pages twice over.
+
+    Each page is a fresh search, so without a pinned shard preference and a
+    deterministic tiebreaker the fused window shifts between requests and pages
+    overlap. Repeating the walk makes that instability reproducible rather than
+    an occasional flake.
+    """
+    for attempt in range(3):
+        seen: list[str] = []
+        token: str | None = None
+        for page in range(3):
+            params: dict[str, Any] = {"q": "enron", "size": 5}
+            if token:
+                params["page_token"] = token
+            body = client.get("/search", params=params).json()
+            ids = [h["id"] for h in body["hits"]]
+            assert ids, f"attempt {attempt} page {page} returned nothing"
+            overlap = set(ids) & set(seen)
+            assert not overlap, f"attempt {attempt} page {page} repeated {len(overlap)} result(s)"
+            seen.extend(ids)
+            token = body["next_page_token"]
+            if not token:
+                break
+        assert len(seen) == len(set(seen))
+
+
+def test_pagination_is_stable_across_identical_requests(client: TestClient) -> None:
+    """The same query must return the same page every time."""
+    params = {"q": "schedule crawler", "size": 10}
+    runs = [
+        [h["id"] for h in client.get("/search", params=params).json()["hits"]] for _ in range(3)
+    ]
+    assert runs[0] == runs[1] == runs[2], "identical queries returned different orders"
 
 
 def test_bad_page_token_is_tolerated(client: TestClient) -> None:

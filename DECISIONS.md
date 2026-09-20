@@ -199,3 +199,58 @@ prose rather than an address (`To: All Enron Employees:`). Counted, not dropped.
 - It answers even when `app.state` was never populated or the cluster is unreachable, degrading to
   `status: "degraded"` with a `detail`. A health endpoint that 500s is useless to the thing
   monitoring it.
+
+## D19 — Phase 5 redesign: warm ivory, a morphing search bar, three columns
+- **Brief:** the visual direction was set by two reference designs supplied on 2026-09-20.
+  Where they conflicted with earlier choices (D17's cool "document scan" palette), the
+  reference wins: the surface is now warm ivory paper with near-black controls.
+- The entry screen and the results view share one search field. It is a single element with
+  `layoutId="search-pill"` inside a `LayoutGroup`, so committing a query makes it *travel*
+  from the hero into the header rather than being swapped for a different bar.
+- **The view swap deliberately does not use `AnimatePresence`.** An exiting workspace never
+  finished leaving while its result rows (`layout="position"`), the reading pane's exit
+  spring and the shared-layout pill were all still animating, which left two views on screen
+  at once. Swapping synchronously is also what shared-layout animation actually needs — both
+  pills must exist in the same commit to interpolate. The hero's blur-out is sequenced ahead
+  of the swap with an explicit `HERO_EXIT_MS` timer instead.
+
+## D20 — Topic tags are fixture-only, and the UI falls back to folders
+- Result tags and the "Key topics" panel read `EmailHit.topics`. The fixture corpus derives
+  these from its `concepts`; the live API has no topic aggregation, so `adapt.ts` returns an
+  empty list and every surface falls back to `folder` (the tab is even relabelled "Folders").
+  Adding a topic field later is a mapping plus an aggregation — no frontend change.
+
+## D21 — Saved and History are real but per-browser; Collections is not built
+- The reference sidebar has four destinations. Saved (starred emails) and History (recent
+  searches) are implemented in `localStorage` — genuinely useful and honest about being
+  per-browser, since user accounts are an explicit MVP non-goal. Collections needs sharing,
+  so it renders an empty state that says so rather than pretending.
+
+## D22 — Two `text-[...]` utilities on one element are not reliable
+- `text-[0.875rem]` plus `text-[var(--color-surface)]` on the same element silently lost the
+  colour (Tailwind cannot always tell a length from a colour inside `var()`). The active tab
+  sets its colour with an inline style instead. Worth remembering before debugging an
+  "invisible" label again.
+
+## D18 — Pagination pins the shard copy and breaks ties explicitly
+- **Symptom:** page 2 of a search occasionally repeated results from page 1.
+- **Cause:** every page re-runs the search. With `number_of_replicas: 1` on three nodes the
+  coordinating node may route consecutive requests to different shard copies. Copies hold the
+  same documents but in different segment layouts, so equal-scoring hits come back in a
+  different order and an offset into the fused window lands somewhere else.
+- **Fix:** a `preference` derived from the query string (so every page of one search reads the
+  same copies) plus an explicit secondary sort on the unique `message_id` (so equal scores still
+  have exactly one total order). Both legs use the same preference.
+- Regression cover walks three pages three times over and asserts identical repeated queries
+  return identical orders, so the instability cannot come back as an occasional flake.
+
+---
+
+# Phase 2 finding
+
+## F6 — The native RRF retriever is confirmed NOT available on Basic (ES 9.5.3)
+The startup probe fires a real `rrf` retriever at the cluster and records the result; `/health`
+reports `native_rrf_available: false`. That settles, by observation on the pinned version, the
+conflict noted in D1 between Elastic's subscription page (which lists RRF under Basic) and the
+community reports of `403 current license is non-compliant`. Manual RRF was the right call and
+remains the only fusion path.

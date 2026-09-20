@@ -208,3 +208,96 @@ def test_rerank_is_skipped_when_the_user_gave_an_explicit_signal(
     for q in ['"natural gas"', "from:john.arnold@enron.com gas"]:
         body = client.get("/search", params={"q": q, "rerank": "true"}).json()
         assert body["timings"]["rerank_ms"] == 0.0, f"{q} should not be reranked"
+
+
+# --------------------------- structured facet filters ---------------------------
+
+
+def test_facet_filter_narrows_results(client: TestClient) -> None:
+    """Clicking a facet sends a structured parameter, not a rewritten query string."""
+    base = client.get("/search", params={"q": "gas", "size": 5}).json()
+    filtered = client.get(
+        "/search", params={"q": "gas", "size": 5, "from": "john.arnold@enron.com"}
+    ).json()
+    assert 0 < filtered["total"] < base["total"]
+    for hit in filtered["hits"]:
+        assert hit["from"] == "john.arnold@enron.com"
+
+
+def test_repeating_a_filter_ors_its_values(client: TestClient) -> None:
+    one = client.get("/search", params={"q": "gas", "from": "john.arnold@enron.com"}).json()
+    two = client.get(
+        "/search",
+        params={"q": "gas", "from": ["john.arnold@enron.com", "bill.williams@enron.com"]},
+    ).json()
+    assert two["total"] >= one["total"]
+
+
+def test_different_filters_are_anded(client: TestClient) -> None:
+    both = client.get(
+        "/search",
+        params={
+            "q": "gas",
+            "from": "john.arnold@enron.com",
+            "after": "2001-07-01",
+            "before": "2001-09-30",
+        },
+    ).json()
+    for hit in both["hits"]:
+        assert hit["from"] == "john.arnold@enron.com"
+        assert "2001-07" <= hit["date"][:7] <= "2001-09"
+
+
+def test_folder_facet_filter(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "", "folder": "sent_items", "size": 5}).json()
+    assert body["total"] > 0
+    for hit in body["hits"]:
+        assert "sent_items" in hit["folder"]
+
+
+def test_structured_filters_also_constrain_the_vector_leg(client: TestClient) -> None:
+    """Flaw #12 again, now for facet-supplied filters rather than query operators."""
+    body = client.get(
+        "/search", params={"q": "power supply problems", "from": "pete.davis@enron.com", "size": 20}
+    ).json()
+    assert body["total"] > 0
+    assert any("knn" in hit["matched_by"] for hit in body["hits"])
+    for hit in body["hits"]:
+        assert hit["from"] == "pete.davis@enron.com"
+
+
+# --------------------------- fields the web client needs ---------------------------
+
+
+def test_hits_carry_real_per_leg_ranks(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "california power", "size": 10}).json()
+    for hit in body["hits"]:
+        if "bm25" in hit["matched_by"]:
+            assert isinstance(hit["bm25_rank"], int) and hit["bm25_rank"] >= 1
+        else:
+            assert hit["bm25_rank"] is None
+        if "knn" in hit["matched_by"]:
+            assert isinstance(hit["vector_rank"], int) and hit["vector_rank"] >= 1
+        else:
+            assert hit["vector_rank"] is None
+
+
+def test_highlights_use_em_tags(client: TestClient) -> None:
+    """The web client splits fragments on <em> and rebuilds them as text nodes."""
+    body = client.get("/search", params={"q": "transmission outage", "size": 10}).json()
+    fragments = [s for hit in body["hits"] for s in hit["snippets"]]
+    assert any("<em>" in f for f in fragments)
+    assert not any("<mark>" in f for f in fragments)
+
+
+def test_sender_display_names_are_never_distinguished_names(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "california", "size": 25}).json()
+    for hit in body["hits"]:
+        assert "/O=" not in hit["from_name"].upper()
+        assert "@" not in hit["from_name"]
+
+
+def test_health_reports_shards_and_document_count(client: TestClient) -> None:
+    body = client.get("/health").json()
+    assert body["docs"] and body["docs"] > 0
+    assert body["active_shards"] and body["active_shards"] > 0

@@ -36,3 +36,11 @@ web/.env.local
 *.swp
 .idea/
 .vscode/
+
+# --- Local env + browser automation artifacts ---
+.env.local
+.env*.local
+.playwright-mcp/
+*.jpeg
+tsconfig.tsbuildinfo
+web/tsconfig.tsbuildinfo

@@ -20,7 +20,6 @@ class Timings(BaseModel):
     bm25_ms: float = 0.0
     knn_ms: float = 0.0
     fuse_ms: float = 0.0
-    highlight_ms: float = 0.0
     rerank_ms: float = 0.0
     total_ms: float = 0.0
 
@@ -55,6 +54,11 @@ class SearchHit(BaseModel):
     duplicate_count: int = 1
     snippets: list[str] = []
     matched_by: list[str] = []
+    message_id: str = ""
+    attachment_names: list[str] = []
+    #: 1-based position within each retrieval leg, or None if that leg missed it.
+    bm25_rank: int | None = None
+    vector_rank: int | None = None
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -68,6 +72,7 @@ class SearchResponse(BaseModel):
     timings: Timings
     warnings: list[str] = []
     next_page_token: str | None = None
+    reranked: bool = False
 
 
 class EmailDetail(BaseModel):
@@ -120,4 +125,6 @@ class HealthResponse(BaseModel):
     native_rrf_available: bool | None = None
     active_index: list[str] = []
     alias: str = "emails"
+    active_shards: int | None = None
+    docs: int | None = None
     detail: str | None = None

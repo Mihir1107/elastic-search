@@ -190,10 +190,14 @@ prose rather than an address (`To: All Enron Employees:`). Counted, not dropped.
   callers the same behaviour with no reindex. The upgrade is a mapping bump plus one reindex
   behind the alias whenever disk allows.
 
-## D16 — `total` is the BM25 leg's exact hit count
+## D16 — `total` is the BM25 leg's exact hit count, floored by what was returned
 - For a hybrid query "how many emails match" is ill-defined. The BM25 leg runs the user's filters
   and keywords with `track_total_hits: true`, so its total is the meaningful, explainable number.
   For a filter-only query the leg is `match_all` + filters, which is exactly the filtered count.
+- Amended in Phase 5: that count describes the BM25 leg alone, so a query whose keywords match
+  nothing while the vector leg finds plenty reported `total: 0` above a full page of results.
+  `total` is now floored at the number of fused hits actually returned, and is 0 only when the
+  BM25 leg did not run at all. Caught by an integration test, not by review.
 
 ## D17 — `/health` reports, never raises
 - It answers even when `app.state` was never populated or the cluster is unreachable, degrading to

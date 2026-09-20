@@ -6,6 +6,7 @@ from elasticsearch import NotFoundError
 from fastapi import APIRouter, HTTPException, Request
 
 from app.models import EmailDetail
+from app.names import display_name
 from app.routes.deps import get_es, get_settings_from
 
 router = APIRouter(tags=["emails"])
@@ -19,4 +20,6 @@ async def get_email(request: Request, email_id: str) -> EmailDetail:
         doc = await es.get(index=settings.emails_alias, id=email_id, source_excludes=["chunks"])
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"email {email_id} not found") from exc
-    return EmailDetail(id=email_id, **dict(doc["_source"]))
+    source = dict(doc["_source"])
+    source["from_name"] = display_name(str(source.get("from_name") or ""))
+    return EmailDetail(id=email_id, **source)

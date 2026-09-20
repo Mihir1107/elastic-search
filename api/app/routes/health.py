@@ -33,8 +33,11 @@ async def health(request: Request) -> HealthResponse:
         response.elasticsearch = str(cluster["status"])
         response.cluster_name = str(cluster["cluster_name"])
         response.number_of_nodes = int(cluster["number_of_nodes"])
+        response.active_shards = int(cluster.get("active_shards", 0))
         aliases = await es.indices.get_alias(name=settings.emails_alias)
         response.active_index = sorted(aliases.keys())
+        counted = await es.count(index=settings.emails_alias)
+        response.docs = int(counted["count"])
         if response.elasticsearch == "red" or not response.active_index:
             response.status = "degraded"
     except Exception as exc:

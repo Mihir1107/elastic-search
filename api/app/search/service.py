@@ -32,13 +32,16 @@ from app.models import (
     Timings,
     Understood,
 )
+from app.names import display_name
 from app.search import facets as facets_mod
 from app.search.builder import (
     HIGHLIGHT,
+    StructuredFilters,
     best_highlight,
     build_bm25_query,
     build_filters,
     build_knn,
+    build_structured_filters,
 )
 from app.search.embedder import embed_query
 from app.search.fusion import FusedHit, fuse
@@ -59,6 +62,8 @@ _SOURCE_FIELDS = [
     "folder",
     "has_attachment",
     "duplicate_count",
+    "message_id",
+    "attachment_names",
     "body",
 ]
 _FALLBACK_SNIPPET_CHARS = 240
@@ -119,7 +124,7 @@ def _to_hit(hit: FusedHit) -> SearchHit:
         score=round(hit.score, 6),
         subject=str(source.get("subject") or ""),
         **{"from": str(source.get("from") or "")},
-        from_name=str(source.get("from_name") or ""),
+        from_name=display_name(str(source.get("from_name") or "")),
         to=list(source.get("to") or []),
         cc=list(source.get("cc") or []),
         date=source.get("date"),
@@ -130,6 +135,12 @@ def _to_hit(hit: FusedHit) -> SearchHit:
         duplicate_count=int(source.get("duplicate_count", 1) or 1),
         snippets=_snippets(hit),
         matched_by=hit.matched_by,
+        message_id=str(source.get("message_id") or ""),
+        attachment_names=list(source.get("attachment_names") or []),
+        # Real per-leg positions, so the UI can show why a hit surfaced rather
+        # than approximating from its position in the fused list.
+        bm25_rank=hit.ranks.get("bm25"),
+        vector_rank=hit.ranks.get("knn"),
     )
 
 
@@ -142,6 +153,7 @@ async def run_search(
     page_token: str | None = None,
     method: Literal["hybrid", "bm25", "vector"] = "hybrid",
     rerank: bool | None = None,
+    structured: StructuredFilters | None = None,
 ) -> SearchResponse:
     """Run the search pipeline.
 
@@ -162,6 +174,9 @@ async def run_search(
     window = min(max(offset + page_size, page_size), settings.fusion_window)
 
     filters = build_filters(parsed)
+    if structured is not None:
+        # Facet clicks AND with whatever the query string already said.
+        filters = filters + build_structured_filters(structured)
     bm25_query = build_bm25_query(parsed, filters, settings.bm25_fields)
 
     request: dict[str, Any] = {
@@ -239,15 +254,25 @@ async def run_search(
         for name, buckets in facets_mod.parse_aggs(bm25_response.body).items()
     }
 
+    # The BM25 leg's exact count is the meaningful "how many emails match"
+    # (DECISIONS D16), but it describes only that leg. A semantic-only query --
+    # keywords that match nothing while the vector leg finds plenty -- would
+    # otherwise report 0 above a page of results. Never under-report what was
+    # actually returned.
+    bm25_total = int(bm25_response["hits"]["total"]["value"])
+    total = bm25_total if "bm25" in legs else 0
+    total = max(total, len(fused))
+
     timings.total_ms = round((perf_counter() - started) * 1000, 2)
     return SearchResponse(
         query=q,
         understood=_understood(parsed),
-        total=int(bm25_response["hits"]["total"]["value"]),
+        total=total,
         size=page_size,
         hits=[_to_hit(hit) for hit in page],
         facets=facet_payload,
         timings=timings,
         warnings=warnings,
         next_page_token=next_token,
+        reranked=bool(timings.rerank_ms),
     )

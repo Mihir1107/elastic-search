@@ -8,6 +8,8 @@ carries no query-language meaning (flaw #13).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from app.search.parser import FUZZINESS, ParsedQuery, is_address
@@ -20,9 +22,12 @@ BM25_FIELDS = ["subject^3", "body", "from.text", "to.text"]
 #: and fragments in practice come from the first part of an email anyway.
 MAX_ANALYZED_OFFSET = 100_000
 
+#: <em> is what the web client's Marker component splits on. It rebuilds the
+#: fragment from text nodes rather than trusting the HTML, so document content
+#: cannot inject markup -- which only works if the tag is the one it expects.
 HIGHLIGHT: dict[str, Any] = {
-    "pre_tags": ["<mark>"],
-    "post_tags": ["</mark>"],
+    "pre_tags": ["<em>"],
+    "post_tags": ["</em>"],
     "encoder": "html",
     "max_analyzed_offset": MAX_ANALYZED_OFFSET,
     "fields": {
@@ -69,6 +74,64 @@ def build_filters(query: ParsedQuery) -> list[dict[str, Any]]:
             # inclusive of the whole day
             rng["lte"] = f"{query.before.isoformat()}T23:59:59.999Z"
         filters.append({"range": {"date": rng}})
+    return filters
+
+
+@dataclass(frozen=True)
+class StructuredFilters:
+    """Filters supplied as query parameters rather than inside the query string.
+
+    This is what the UI sends when someone clicks a facet. Several values for
+    one field are OR-ed; different fields are AND-ed, which is what a facet
+    sidebar means by "sender = A or B, and folder = inbox".
+    """
+
+    from_: tuple[str, ...] = ()
+    to: tuple[str, ...] = ()
+    cc: tuple[str, ...] = ()
+    folder: tuple[str, ...] = ()
+    after: date | None = None
+    before: date | None = None
+    has_attachment: bool | None = None
+
+    def is_empty(self) -> bool:
+        return not (
+            self.from_
+            or self.to
+            or self.cc
+            or self.folder
+            or self.after
+            or self.before
+            or self.has_attachment is not None
+        )
+
+
+def _any_of(field: str, values: tuple[str, ...]) -> dict[str, Any] | None:
+    clauses = [_address_clause(field, v) for v in values]
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"bool": {"should": clauses, "minimum_should_match": 1}}
+
+
+def build_structured_filters(f: StructuredFilters) -> list[dict[str, Any]]:
+    filters: list[dict[str, Any]] = []
+    for field, values in (("from", f.from_), ("to", f.to), ("cc", f.cc)):
+        clause = _any_of(field, values)
+        if clause:
+            filters.append(clause)
+    if f.folder:
+        filters.append({"terms": {"folder": list(f.folder)}})
+    if f.after or f.before:
+        rng: dict[str, str] = {}
+        if f.after:
+            rng["gte"] = f.after.isoformat()
+        if f.before:
+            rng["lte"] = f"{f.before.isoformat()}T23:59:59.999Z"
+        filters.append({"range": {"date": rng}})
+    if f.has_attachment is not None:
+        filters.append({"term": {"has_attachment": f.has_attachment}})
     return filters
 
 

@@ -32,6 +32,19 @@ src = ["api", "ingest"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's documented style puts Query()/Depends() in argument defaults, which
+# B008 flags by default. These calls are immutable markers, not shared state.
+extend-immutable-calls = [
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Body",
+  "fastapi.Header",
+  "fastapi.Depends",
+  "typer.Option",
+  "typer.Argument",
+]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

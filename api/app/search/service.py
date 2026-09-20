@@ -14,6 +14,7 @@ on the unique ``message_id`` (so equal scores still have one total order).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -205,7 +206,16 @@ async def run_search(
 
     if parsed.semantic_text and method in ("hybrid", "vector"):
         t0 = perf_counter()
-        vector = embed_query(parsed.semantic_text, settings.embed_model, settings.bge_query_prefix)
+        # Off the event loop: encoding is synchronous CPU work, and running it
+        # inline stalls every other in-flight request for its whole duration.
+        # Measured on the dev subset, concurrency 1 -> 8: p50 wall 46.6ms ->
+        # 159.6ms with the call inline, while embed_ms itself stayed flat --
+        # the cost was other requests queueing behind it, not the model.
+        # torch releases the GIL inside the forward pass, so a worker thread
+        # genuinely overlaps with the event loop's I/O.
+        vector = await asyncio.to_thread(
+            embed_query, parsed.semantic_text, settings.embed_model, settings.bge_query_prefix
+        )
         timings.embed_ms = round((perf_counter() - t0) * 1000, 2)
 
         t0 = perf_counter()
@@ -232,8 +242,13 @@ async def run_search(
         use_rerank = False
     if use_rerank and parsed.semantic_text and fused:
         t0 = perf_counter()
-        fused = rerank_hits(
-            parsed.semantic_text, fused, settings.rerank_model, settings.rerank_window
+        # Same reasoning as the embedder: the cross-encoder is heavier still.
+        fused = await asyncio.to_thread(
+            rerank_hits,
+            parsed.semantic_text,
+            fused,
+            settings.rerank_model,
+            settings.rerank_window,
         )
         timings.rerank_ms = round((perf_counter() - t0) * 1000, 2)
 

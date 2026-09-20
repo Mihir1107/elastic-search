@@ -396,3 +396,46 @@ During the outage p50 fell from 130.5 ms to 82.7 ms and p95 from 298.2 ms to 176
 node gone the coordinating node holds more of the shards it needs locally, so the fan-out costs
 less network. Worth stating explicitly because "latency improved during the chaos phase" reads
 like an instrumentation bug and is not one.
+
+## D30 — Embedding and reranking run off the event loop
+- **Symptom:** search latency scaled almost linearly with concurrency while the corpus stayed
+  the same size. Dev subset, `ops/bench`, concurrency 1 / 2 / 4 / 8:
+  wall p50 **46.6 / 48.2 / 89.0 / 159.6 ms**, and `bm25_ms` p50 **12.9 / 18.9 / 38.9 / 76.3 ms**
+  — while `embed_ms` stayed flat at ~15-19 ms throughout.
+- **Cause:** `embed_query` is synchronous CPU work and was called inline in an async handler, so
+  it blocked the event loop for its whole duration. `bm25_ms` is wall time around
+  `await es.search`, so it absorbed the delay of *other* requests' encoding and looked like an
+  Elasticsearch cost. It was not: measured directly against ES, the same query at size 20 costs
+  **6.6 ms bare, 26.2 ms with highlighting and facets**.
+- **Fix:** `asyncio.to_thread` for both the embedder and the cross-encoder. torch releases the
+  GIL inside the forward pass, so a worker thread genuinely overlaps with the loop's I/O.
+- **Measured after:** concurrency 4 wall p50 89.0 -> **74.2 ms**, p95 172.1 -> **154.7 ms**;
+  concurrency 8 p50 159.6 -> **140.5 ms**; `bm25_ms` p50 at concurrency 8 76.3 -> **29.3 ms**.
+  `eval.cli check` unchanged at 0.8775 (delta +0.0000).
+- What remains is real compute: several concurrent encodes saturate the CPU. That is a capacity
+  limit, not a bug.
+
+## F12 — Highlight tuning is a dead end; the cost is per document, not per fragment
+Measured directly against Elasticsearch, same BM25 query, varying one thing at a time:
+
+| variant | size 20 | size 200 |
+|---|---:|---:|
+| no highlighting (floor) | 6.5 ms | 8.6 ms |
+| current (4 fields, fragment_size 160, 2 fragments) | 24.1 ms | 158.8 ms |
+| drop the `.exact` fields | 23.5 ms | 162.2 ms |
+| `number_of_fragments: 1`, `fragment_size: 100` | 23.7 ms | 165.6 ms |
+| `max_analyzed_offset` 100k -> 10k | — | 145.8 ms |
+
+Every knob is within noise; only the **document count** matters (~0.8 ms per document). This
+closes the directions HANDOFF §3.3 listed as untried and promising — smaller `fragment_size`,
+fewer fragments, a reduced field set. None of them earn anything. (`fvh` is separately ruled
+out: it *requires* term vectors, which D26 measured and reverted.)
+
+## F13 — `fusion_window` does not describe a normal request, so shrinking it buys nothing
+`service.py` computes `window = min(max(offset + page_size, page_size), fusion_window)`. A first
+page of 20 therefore fetches **20 per leg, not 200**; the window only grows as someone pages
+deeper. Two consequences worth recording:
+- Halving `fusion_window` — the lever this phase opened with — would not touch the common case.
+- An evaluation sweep over `fusion_window` (200/150/100/75/50) returned **byte-identical
+  metrics**, because the harness runs at `size=50` and `min(50, fusion_window)` is 50 for all of
+  them. The sweep proved nothing and was discarded rather than reported as "no relevance cost".

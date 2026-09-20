@@ -27,6 +27,7 @@ never picks "fuzzy" vs "prefix".
 - [Make Targets](#make-targets)
 - [CI/CD](#cicd)
 - [Key Design Decisions](#key-design-decisions)
+- [Known Limitations](#known-limitations-stated-plainly)
 
 ---
 
@@ -44,9 +45,16 @@ a polished investigation UI:
 | **Evaluation** | 50-query relevance harness with auto-grading rules, NDCG@10/MRR/Recall metrics, CI regression gating |
 | **Operations** | Latency benchmarking, chaos testing (kill-under-load HA), snapshot & restore |
 
-> **Status**: Phases 0–5 complete. **Phase 6 (Scale & HA)** is in progress —
-> 100k corpus ingested (52,219 unique emails), latency and chaos gates passed,
-> snapshot/restore verification remaining. See `DECISIONS.md` for the decision log.
+> **Status**: complete. The shipped index holds **52,219 unique emails** from
+> 100,000 parsed messages. All gates are met and their evidence is committed in
+> [`ops/results/`](ops/results/PHASE6.md): p95 **220.5 ms** against a 300 ms
+> target, a chaos run with **0 failed requests out of 3,654** while a node was
+> killed mid-load, and snapshot/restore into a new index version with the live
+> alias untouched.
+>
+> Two things are deliberately *not* claimed: this is 100k of 517,401 messages,
+> and the 12 conceptual evaluation queries are still unlabelled. Both are
+> explained under [Known limitations](#known-limitations-stated-plainly).
 
 ---
 
@@ -185,8 +193,20 @@ object explaining how the query was interpreted.
 ### Pagination
 
 Opaque base64 page tokens with deterministic shard routing via SHA-1 `preference`
-strings and tiebreaker sorting on `message_id` — no document skipping or
-duplication across pages.
+strings and tiebreaker sorting on `message_id`, so repeated requests read the
+same shard copies in the same order.
+
+Crucially, **the fusion window is a constant for a query, never a function of the
+page**. RRF scores a document against whatever it was fused with, so a window
+that grew per page re-ranked the whole list and page two repeated results from
+page one. Pagination reaches `fusion_window` (120) results — six pages of 20 —
+and the API says so in `warnings` rather than silently truncating.
+
+Because the window is wide but a page is small, **highlighting is a separate,
+id-filtered query over just the returned page**. Highlighting costs per document
+(8.6 ms for 200 documents without it, 158.8 ms with), so keeping it off the
+retrieval leg is what holds the latency target while pagination stays correct.
+See DECISIONS D32.
 
 ---
 
@@ -274,7 +294,7 @@ against regressions.
 
 - **Graded scale**: 0 (irrelevant) to 3 (exact answer)
 - **38 queries auto-graded** with deterministic rules (required phrases, sender match, date window)
-- **12 conceptual queries** hand-labeled via interactive CLI (with optional LLM pre-labeling via Claude)
+- **12 conceptual queries** need a human; an interactive CLI labels them (with optional LLM pre-labelling as a *suggestion*, off by default). **These are still unlabelled** — see the caveat under Results.
 - Unjudged queries **excluded** from means, never scored as zero
 
 ### Metrics
@@ -287,10 +307,21 @@ against regressions.
 
 | Method | NDCG@10 | MRR | Recall@50 |
 |---|---|---|---|
-| BM25 | 0.909 | 0.974 | 0.659 |
-| Vector | 0.637 | 0.747 | 0.500 |
-| **Hybrid** | **0.899** | **0.956** | **0.829** |
-| Hybrid + Rerank | 0.887 | 0.961 | 0.829 |
+| BM25 | 0.9087 | 0.9737 | 0.659 |
+| Vector | 0.6415 | 0.7474 | 0.502 |
+| **Hybrid** | **0.9079** | **0.9569** | **0.791** |
+| Hybrid + Rerank | 0.8982 | 0.9613 | 0.791 |
+
+**Read these honestly.** BM25 edges hybrid by 0.0008 here, and that is not
+evidence that fusion is not worth it: 38 of the 50 queries are graded by
+phrase / sender / date rules, which is exactly BM25's home ground, and the 12
+conceptual queries — the ones that would test the vector leg and reranking —
+are still unlabelled. `Recall@50` is comparative only, because the judgment
+pool is built from these same systems' own results.
+
+Reranking is **off by default** because it measured net-negative on this query
+set (DECISIONS D25). It is implemented, flagged per request (`?rerank=true`),
+and reports its own `rerank_ms` so its cost can never hide inside the total.
 
 ### Commands
 
@@ -313,7 +344,12 @@ make bench          # fires 50 queries at configurable concurrency (1, 4, 8)
 ```
 
 Reports client wall-time percentiles (p50/p95/p99) alongside API per-stage
-timings. At concurrency 4 on 52k documents: **p95 = 157.8 ms** (target < 300 ms).
+timings. At concurrency 4 on 52,219 documents: **p95 = 220.5 ms** against a
+300 ms target. Measured across repeated runs the p95 sits in a **175–275 ms**
+band on a loaded laptop, so the margin is roughly 10–40% rather than the single
+best number — and p99 is not always under 300 ms. Latency tracks concurrency
+far more than corpus size: the same measurement on a 7,355-document index gave
+p95 154.7 ms (DECISIONS F16).
 
 ### Chaos Testing
 
@@ -366,7 +402,25 @@ make web-install        # npm ci in web/
 ```bash
 cp .env.example .env
 # Edit .env — change ELASTIC_PASSWORD and KIBANA_PASSWORD
+
+cp web/.env.local.example web/.env.local
 ```
+
+**Do not skip the second line.** `NEXT_PUBLIC_USE_MOCK` defaults to *true* when
+unset, so a frontend started without `web/.env.local` runs against an in-browser
+fixture corpus and never calls your cluster. The health pill looks identical
+either way — tell them apart by the results, not the pill.
+
+`.env` also carries `ES_HOST`, which is **comma-separated** and lists all three
+published nodes:
+
+```
+ES_HOST=https://localhost:9200,https://localhost:9201,https://localhost:9202
+```
+
+The client round-robins across them and retries elsewhere when one dies. With a
+single host listed, killing that node fails every request and the chaos demo
+cannot pass.
 
 ### 3. Start Elasticsearch
 
@@ -391,9 +445,26 @@ make health             # cluster health + license tier
 
 ```bash
 make ingest-dev         # 10k-message dev subset (~7,355 unique after dedup)
-# OR
-make ingest-full        # full Enron corpus (~500k messages)
 ```
+
+The subset size is a setting, so the shipped 100k corpus is the same command
+with a bigger target (31 whole mailboxes, a deterministic superset of the dev
+subset — roughly 50 minutes, mostly embedding):
+
+```bash
+DEV_SUBSET_SIZE=100000 INDEX_VERSION=v2 make ingest-dev
+```
+
+Or the whole archive, which is **5–7 hours** and needs the dedupe stage
+rewritten to spill to disk first (DECISIONS D12, D27):
+
+```bash
+make ingest-full        # full Enron corpus (517,401 messages)
+```
+
+The first run downloads a 423 MB tarball from CMU and extracts only the
+mailboxes it needs. Every stage is resumable: re-running picks up where it
+stopped, and `make stats` prints what each stage processed, skipped and failed.
 
 ### 6. Start the API
 
@@ -405,6 +476,14 @@ uv run uvicorn app.main:app --app-dir api --reload    # http://localhost:8000/do
 
 ```bash
 make web                # http://localhost:3000
+```
+
+Next.js inlines `NEXT_PUBLIC_*` at **build** time. If you change
+`web/.env.local` after having built once, delete the build cache or the old
+value keeps being served:
+
+```bash
+rm -rf web/.next && make web
 ```
 
 ### 8. Search!
@@ -441,6 +520,18 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | `EMBED_DIMS` | `384` | Vector dimensionality |
 | `RERANK_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model |
 | `MEM_LIMIT` | `2147483648` | Per-container Docker memory limit (2 GiB) |
+| `FUSION_WINDOW` | `120` | Candidates fused per leg, and how deep pagination reaches |
+| `DEFAULT_PAGE_SIZE` | `20` | Results per page |
+| `RERANK_ENABLED` | `false` | Cross-encoder off by default (D25); `?rerank=true` overrides per request |
+| `DEV_SUBSET_SIZE` | `10000` | Messages the `dev` subset targets; set to `100000` to reproduce the shipped index |
+| `INDEX_VERSION` | `v1` | Which `emails-vN` the ingest writes; the alias flips only after verification |
+
+The frontend reads two of its own, in `web/.env.local`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_USE_MOCK` | `true` when unset | `false` calls the real API; anything else serves the fixture corpus |
+| `API_BASE_URL` | `http://localhost:8000` | Server-side only — where FastAPI listens |
 
 > **Never commit** `.env`, `data/`, `certs/`, or model weights.
 
@@ -511,7 +602,7 @@ elastic-search/
 │   ├── harness.py              #   candidate pooling via production search
 │   ├── judge.py                #   auto-grading + human labeling
 │   ├── metrics.py              #   NDCG@10, MRR, Recall@50
-│   ├── prelabel.py             #   LLM pre-labeling (Claude)
+│   ├── prelabel.py             #   optional LLM pre-labelling (suggestions only)
 │   └── results/                #   reports + baseline.json
 │
 ├── ops/                        # Operations
@@ -530,8 +621,9 @@ elastic-search/
 ├── Makefile                    # Developer entry points (make help)
 ├── pyproject.toml              # uv workspace root + dev dependencies
 ├── .github/workflows/ci.yml   # CI pipeline
-├── DECISIONS.md                # Architectural decision log
-└── CLAUDE_CODE_KICKOFF.md      # Project phases & gates
+├── DECISIONS.md                # Decision log: what was chosen, and what was measured and reverted
+├── CONTRIBUTING.md             # Conventions, hard rules, quality gate
+└── docs/SPEC.md                # Product specification and success criteria
 ```
 
 ---
@@ -602,8 +694,36 @@ every pull request:
 | **ML in worker threads** | `asyncio.to_thread` for embedding and reranking — drops concurrency-4 p50 from 89 ms to 74 ms |
 | **Multi-node ES client** | `ES_HOST` is comma-separated; the client round-robins and retries on another node when one dies — required for 0-failure chaos gate |
 | **Server-side API proxy** | Frontend routes through Next.js `/api/proxy/[...path]` so ES credentials never appear in client bundles |
+| **Constant fusion window** | RRF ranks a document against whatever it was fused with, so a window that grew per page made page two repeat page one — the window is now fixed at 120 (D32) |
+| **Page-only highlighting** | Highlighting costs per document, so it runs as a second `ids`-filtered query over just the returned page; this is what keeps p95 under target with the wider window |
 
 See [`DECISIONS.md`](DECISIONS.md) for the complete decision log with measurements and alternatives considered.
+
+### Things that were tried and measured worse
+
+Negative results are recorded because they are as useful as the positive ones:
+
+| Attempt | Measured | Verdict |
+|---|---|---|
+| Native `rrf` retriever | `403` on Basic | Not available; manual RRF instead |
+| `term_vector: with_positions_offsets` for faster highlighting | **24–31% slower** | Reverted (D26) |
+| Smaller `fragment_size` / fewer fragments / smaller field set | Within noise at every size | No effect — the cost is per document, not per fragment (F12) |
+| `subject^3` (as originally specified) | −0.021 NDCG@10 vs `^1` | The specification was wrong (D24) |
+| Reranking on by default | −0.037 NDCG@10 | Off by default (D25) |
+| Highlighting only the page, *while the wide query still highlighted everything* | 223 ms → 422 ms | Lost then; **wins now** that the wide query highlights nothing (D32) |
+
+### Known limitations, stated plainly
+
+- **100,000 of 517,401 messages.** The specification asks for the full corpus;
+  this does not meet that as written (D27). Full ingest is 5–7 hours and needs
+  the dedupe stage to spill to disk.
+- **The 12 conceptual queries are unlabelled**, so the relevance numbers are
+  measured on a query set that favours BM25 (F15).
+- **This corpus has no reply headers and no attachments.** Threading falls back
+  to normalised subjects, and the Attachments facet is always empty. Both are
+  properties of the CMU release, verified against the raw files (F1, F18).
+- **First use of the reranker costs ~8.8 s** while the cross-encoder loads; it is
+  ~314 ms warm (F19).
 
 ---
 

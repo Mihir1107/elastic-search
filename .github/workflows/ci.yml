@@ -20,7 +20,7 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
       - name: Typecheck
-        run: uv run mypy api/app ingest/ingest
+        run: uv run mypy api/app ingest/ingest ops
       - name: Unit tests
         run: uv run pytest -m "not integration"
 

@@ -82,3 +82,35 @@ Newest first. Each entry: decision, alternatives considered, reason.
   machine. Flagged as the first thing to change if full-corpus ingest hits memory pressure.
   Related: `embedded.jsonl` stores vectors as 6-dp floats; a binary sidecar would be the
   full-corpus upgrade if that file gets unwieldy.
+
+---
+
+# Phase 1 findings from the real corpus (10k dev subset, 2026-09-20)
+
+## F1 — The CMU CALO release has NO In-Reply-To or References headers
+Verified independently against the raw files: 0 of 2,000 sampled raw messages contain either
+header, while all 10,000 have a `Message-ID`. So `thread` links **nothing** by the reply graph on
+this corpus (`linked_by_headers: 0`) and the normalised-subject fallback does all the work
+(1,549 links, 5,806 threads, 737 multi-message). The header path is not dead code — the
+synthetic end-to-end test supplies those headers and exercises it — the corpus simply lacks them.
+Worth knowing before anyone "fixes" a threading bug that isn't there.
+
+## F2 — ~26% of messages are cross-mailbox duplicates
+10,000 parsed messages collapse to 7,355 unique documents. This is exactly the duplication the
+kickoff calls out, and it is why the canonical content-hash `_id` matters.
+
+## F3 — Lotus Notes / X.400 distinguished names appear in recipient headers
+e.g. `/o=enron/ou=na/cn=recipients/cn=notesaddr/cn=<id>@enron.com`. `email.utils.getaddresses`
+cannot parse them and dropped those recipients silently. `parse` now recovers any address-shaped
+token the strict parse misses. Found by spot-checking against raw files, not by a unit test —
+which is the argument for keeping that check independent of the parser.
+
+## F4 — The largest "thread" (343 messages) is an automated alert stream
+All 343 share the subject `Schedule Crawler: HourAhead Failure` (Dec 2001 - Feb 2002); the next
+largest threads are 21/16/13. The subject fallback chains them transitively through the 30-day
+window. Defensible (they are the same recurring alert) but a Phase 4 tuning candidate: consider
+capping thread size or special-casing machine senders.
+
+## F5 — 351 messages have no usable recipient address
+346 genuinely have no `To:` header at all (calendar entries, notes); 5 have a `To:` line that is
+prose rather than an address (`To: All Enron Employees:`). Counted, not dropped.

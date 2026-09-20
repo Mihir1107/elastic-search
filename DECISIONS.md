@@ -49,3 +49,36 @@ Newest first. Each entry: decision, alternatives considered, reason.
 - **Disk ~14 GB free (97% used):** fine for Phase 0/1; a real risk for the full-corpus Phase 6.
   `make preflight` warns under 8 GB free; we will measure the dev-subset index size to extrapolate.
 - **Docker Desktop must be running** for `make up`; give it ≥ 8 GB memory for the 3-node cluster.
+
+---
+
+# Phase 1 (Ingestion)
+
+## D8 — Dev subset = whole mailboxes in hash order, truncated to exactly N
+- **Alternatives:** random message-level sampling; first N mailboxes alphabetically.
+- **Reason:** message-level random sampling destroys the two structures stages 4 and 5 exist
+  to handle — the same email appearing in several mailboxes (dedupe) and reply chains
+  (threading). Taking *whole* mailboxes preserves both. Ordering mailboxes by `sha1(name)`
+  avoids the alphabetical bias of "first N", and truncating the last mailbox makes the count
+  exactly `dev_subset_size`. Fully deterministic, so `make ingest-dev` is reproducible.
+
+## D9 — Chunk on the embedding model's own tokenizer; embed subject + body
+- ~200 tokens with 40 overlap, capped at 8 chunks/doc. `bge-small-en-v1.5` truncates around
+  512 tokens, so embedding a whole body silently discards most of a long email (flaw #10).
+  The subject is prepended to the chunked text because it carries much of an email's topic.
+
+## D10 — Canonical `_id` = SHA-1 over (from, recipients, date, subject, body)
+- Content-addressed ids are what make the pipeline idempotent: re-running any stage upserts the
+  same documents instead of duplicating them, and cross-mailbox copies collapse naturally.
+
+## D11 — Conservative quoted-reply detection
+- Markers: `-----Original Message-----`, `---- Forwarded by`, a long underscore rule,
+  `On ... wrote:`, and the start of a `>`-quoted run. A bare `From:` line is deliberately NOT a
+  marker: it appears inside legitimate bodies and using it truncated real content.
+
+## D12 — dedupe holds one entry per unique message in memory
+- **Alternative:** disk-backed external sort.
+- **Reason:** comfortable for the 10k dev subset and workable for the full corpus on this
+  machine. Flagged as the first thing to change if full-corpus ingest hits memory pressure.
+  Related: `embedded.jsonl` stores vectors as 6-dp floats; a binary sidecar would be the
+  full-corpus upgrade if that file gets unwieldy.

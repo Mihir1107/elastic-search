@@ -25,12 +25,16 @@ def _emit(stats: object) -> None:
 @app.command()
 def download(
     force: bool = typer.Option(False, "--force", help="Re-download and re-extract."),
+    subset: str = _SUBSET,
+    prune_archive: bool = typer.Option(
+        False, "--prune-archive", help="Delete the .tar.gz after a successful extract."
+    ),
 ) -> None:
     """Fetch + checksum + extract the Enron corpus into data/raw/."""
     from ingest.download import download as run_download
 
     settings = get_settings()
-    stats = run_download(settings, force=force)
+    stats = run_download(settings, force=force, subset=subset, prune_archive=prune_archive)
     stats.write(settings.stats_dir)
     _emit(stats)
 
@@ -117,7 +121,7 @@ def index() -> None:
 @app.command()
 def run(subset: str = _SUBSET) -> None:
     """Run every stage end to end."""
-    download()
+    download(subset=subset)
     parse(subset=subset)
     normalise()
     dedupe()

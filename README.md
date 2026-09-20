@@ -41,6 +41,21 @@ Day-to-day on a laptop, prefer a single node: `make up-single`. Kibana (optional
 **Before real use:** copy `.env.example` to `.env` and change `ELASTIC_PASSWORD`
 and `KIBANA_PASSWORD`. Never commit `.env`, `data/`, `certs/`, or model weights.
 
+## Ingestion
+
+```bash
+make ingest-dev     # download -> parse -> normalise -> dedupe -> thread -> embed -> index
+                    # over a deterministic 10k-message subset of the real Enron corpus
+make ingest-full    # the same pipeline over all ~500k messages
+make stats          # per-stage processed / skipped / failed counts, with reasons
+make spotcheck      # compare 20 parsed documents against their raw maildir files
+```
+
+Stages can also be run individually (`uv run python -m ingest.cli parse --subset dev`).
+Every stage is resumable and idempotent: documents are content-addressed, so re-running
+upserts rather than duplicates. Data lands in a versioned index (`emails-v1`) and the
+`emails` alias is moved only after the document count and a smoke query pass.
+
 ## Repository layout
 
 ```

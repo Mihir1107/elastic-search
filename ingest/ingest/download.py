@@ -1,9 +1,15 @@
 """Stage 1: download + checksum + extract the Enron corpus.
 
-Idempotent: an archive that is already present is not re-downloaded, and an
-already-extracted maildir is not re-extracted. The archive is streamed to a
-``.part`` file and renamed only on success, so an interrupted run never leaves a
-truncated archive that looks complete.
+Resumable and idempotent (kickoff section 5):
+
+* the archive streams to a ``.part`` file and is renamed only on success, and a
+  restart continues from what is already on disk via an HTTP Range request, so
+  an interrupted 423 MB download is never repeated from zero;
+* extraction is **selective**. For the dev subset only the mailboxes that subset
+  needs are unpacked (tens of MB) instead of the full ~1.4 GB maildir, which
+  matters a great deal on a laptop that is short on disk. Mailboxes are chosen
+  with the same stable sha1 ordering ``ingest.parse`` uses, so what is extracted
+  is always a superset of what parse will select.
 
 Source: https://www.cs.cmu.edu/~enron/ (CMU CALO release, May 2015 maildir).
 """
@@ -12,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import tarfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -20,20 +27,35 @@ from ingest.stats import StageStats
 
 _CHUNK = 1024 * 1024
 _SENTINEL = ".extracted"
+_ROOT = "maildir"
 
 
-def _stream_download(url: str, dest: Path) -> tuple[int, str]:
-    """Stream ``url`` to ``dest``, returning (bytes, sha256). Atomic via .part."""
-    digest = hashlib.sha256()
-    total = 0
+def _stream_download(url: str, dest: Path) -> tuple[int, bool]:
+    """Download ``url`` to ``dest``, resuming a partial ``.part`` file.
+
+    Returns (bytes_on_disk, resumed).
+    """
     tmp = dest.with_name(dest.name + ".part")
-    with urllib.request.urlopen(url) as resp, tmp.open("wb") as out:
-        while chunk := resp.read(_CHUNK):
-            out.write(chunk)
-            digest.update(chunk)
-            total += len(chunk)
+    existing = tmp.stat().st_size if tmp.exists() else 0
+    request = urllib.request.Request(url)
+    if existing:
+        request.add_header("Range", f"bytes={existing}-")
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            mode = "ab" if existing and response.status == 206 else "wb"
+            if mode == "wb":
+                existing = 0  # server ignored the Range header; start over
+            with tmp.open(mode) as out:
+                while chunk := response.read(_CHUNK):
+                    out.write(chunk)
+    except urllib.error.HTTPError as exc:
+        # 416 means the .part file is already the whole archive.
+        if exc.code != 416 or not existing:
+            raise
+
     tmp.replace(dest)
-    return total, digest.hexdigest()
+    return dest.stat().st_size, existing > 0
 
 
 def _sha256_of(path: Path) -> str:
@@ -44,7 +66,68 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(settings: IngestSettings, *, force: bool = False) -> StageStats:
+def _mailbox_of(member_name: str) -> str | None:
+    parts = Path(member_name).parts
+    if len(parts) < 3 or parts[0] != _ROOT:
+        return None
+    return parts[1]
+
+
+def scan_mailboxes(archive: Path) -> dict[str, int]:
+    """One streaming pass over the archive: message count per mailbox."""
+    counts: dict[str, int] = {}
+    with tarfile.open(archive, "r|gz") as tar:
+        for member in tar:
+            if not member.isfile():
+                continue
+            mailbox = _mailbox_of(member.name)
+            if mailbox:
+                counts[mailbox] = counts.get(mailbox, 0) + 1
+    return counts
+
+
+def select_mailboxes(counts: dict[str, int], target: int) -> set[str]:
+    """Whole mailboxes in stable hash order until ``target`` messages are covered.
+
+    Mirrors ``ingest.parse.select_message_files`` so extraction is a superset of
+    what parse will later select.
+    """
+    ordered = sorted(counts, key=lambda n: hashlib.sha1(n.encode()).hexdigest())
+    chosen: set[str] = set()
+    total = 0
+    for name in ordered:
+        if total >= target:
+            break
+        chosen.add(name)
+        total += counts[name]
+    return chosen
+
+
+def extract(archive: Path, raw: Path, wanted: set[str] | None) -> int:
+    """Extract the archive. ``wanted`` limits it to those mailboxes (None = all)."""
+    extracted = 0
+    with tarfile.open(archive, "r|gz") as tar:
+        for member in tar:
+            if wanted is not None:
+                mailbox = _mailbox_of(member.name)
+                if member.isfile():
+                    if mailbox is None or mailbox not in wanted:
+                        continue
+                elif mailbox is not None and mailbox not in wanted:
+                    continue
+            tar.extract(member, raw, filter="data")
+            if member.isfile():
+                extracted += 1
+    return extracted
+
+
+def download(
+    settings: IngestSettings,
+    *,
+    force: bool = False,
+    subset: str = "dev",
+    prune_archive: bool = False,
+) -> StageStats:
     stats = StageStats("download")
     raw = settings.raw_dir
     raw.mkdir(parents=True, exist_ok=True)
@@ -53,16 +136,16 @@ def download(settings: IngestSettings, *, force: bool = False) -> StageStats:
     if archive.exists() and not force:
         stats.skip("archive-already-present")
         size = archive.stat().st_size
-        digest = _sha256_of(archive)
     else:
-        size, digest = _stream_download(settings.enron_url, archive)
+        size, resumed = _stream_download(settings.enron_url, archive)
         stats.ok()
+        stats.extra["resumed"] = resumed
 
+    digest = _sha256_of(archive)
     stats.extra["archive"] = str(archive)
     stats.extra["archive_bytes"] = size
     stats.extra["sha256"] = digest
 
-    # If a checksum is pinned in config, enforce it; otherwise report it so it can be pinned.
     if settings.enron_sha256:
         if digest != settings.enron_sha256:
             stats.fail("checksum-mismatch")
@@ -73,22 +156,36 @@ def download(settings: IngestSettings, *, force: bool = False) -> StageStats:
         stats.extra["checksum_verified"] = False
         stats.extra["note"] = "enron_sha256 not pinned; set ENRON_SHA256 to enforce it"
 
-    maildir = raw / "maildir"
+    maildir = raw / _ROOT
     sentinel = raw / _SENTINEL
-    if sentinel.exists() and maildir.is_dir() and not force:
+    expected_marker = f"{digest}:{subset}"
+    if (
+        sentinel.exists()
+        and maildir.is_dir()
+        and sentinel.read_text().strip() == expected_marker
+        and not force
+    ):
         stats.skip("already-extracted")
         stats.extra["maildir"] = str(maildir)
         return stats
 
-    extracted = 0
-    # Stream mode ("r|gz") reads the archive in a single pass.
-    with tarfile.open(archive, "r|gz") as tar:
-        for member in tar:
-            tar.extract(member, raw, filter="data")
-            if member.isfile():
-                extracted += 1
-    sentinel.write_text(digest + "\n")
+    wanted: set[str] | None = None
+    if subset != "full":
+        counts = scan_mailboxes(archive)
+        stats.extra["mailboxes_in_archive"] = len(counts)
+        stats.extra["messages_in_archive"] = sum(counts.values())
+        wanted = select_mailboxes(counts, settings.dev_subset_size)
+        stats.extra["mailboxes_extracted"] = sorted(wanted)
+
+    extracted = extract(archive, raw, wanted)
+    sentinel.write_text(expected_marker + "\n")
     stats.ok()
+    stats.extra["subset"] = subset
     stats.extra["extracted_files"] = extracted
     stats.extra["maildir"] = str(maildir)
+
+    if prune_archive:
+        archive.unlink(missing_ok=True)
+        stats.extra["archive_pruned"] = True
+
     return stats

@@ -114,3 +114,88 @@ capping thread size or special-casing machine senders.
 ## F5 — 351 messages have no usable recipient address
 346 genuinely have no `To:` header at all (calendar entries, notes); 5 have a `To:` line that is
 prose rather than an address (`To: All Enron Employees:`). Counted, not dropped.
+
+---
+
+# Phase 5 (Frontend)
+
+## D13 — `web/` is Next.js 15 App Router + React 19 + Tailwind v4, pinned exactly
+- **Alternatives:** Vite SPA (leaner, no server layer); Streamlit (explicitly ruled out).
+- **Reason:** matches the architecture committed in the kickoff (section 3) and keeps a
+  server-side seam for the API host. Versions are pinned with exact numbers, matching the
+  Python side's `==` convention.
+
+## D14 — The browser never talks to FastAPI directly; everything goes via `/api/proxy/*`
+- **Alternatives:** call the API straight from the client with a `NEXT_PUBLIC_API_URL`.
+- **Reason:** same reason `config.py` exists — no host or credential belongs in a client
+  bundle. It also gives one place to add auth headers when accounts arrive, without
+  touching any component. See `web/app/api/proxy/[...path]/route.ts`.
+
+## D15 — A fixture corpus backs the UI until the search API is gated
+- The frontend was built while Phase 2 was still in progress, so `web/lib/mock/` implements
+  the *shape* of the pipeline (BM25 leg, vector leg, manual RRF at k=60, highlight, facets,
+  per-stage timing) over ~36 synthetic emails. `NEXT_PUBLIC_USE_MOCK=false` switches to the
+  real API. The fixtures are **not** real Enron mail and are not evaluation data — they
+  exist so the interface can be designed and reviewed against realistic text shapes.
+
+## D16 — `web/lib/adapt.ts` absorbs the API/UI contract mismatch
+- The API and the UI were written in parallel and named things differently
+  (`understood`/`timings`/`snippets`/`matched_by` vs `parsed`/`timing`/`highlight`/`signals`,
+  and `folder` is a list server-side but singular in a result row). Rather than spread that
+  through every component, one adapter maps the wire format to the view models.
+- **Open:** the mapping is written against `api/app/models.py` as of Phase 2 development and
+  has **not been exercised against a live API yet**. Two fields are approximations that need
+  confirming at the Phase 5 gate: the API reports *which* legs matched (`matched_by`) but not
+  the rank within each leg, so the retrieval signal bars show presence rather than depth; and
+  `highlight_ms` / `facets_ms` / rerank timing are not broken out, so the timing panel omits
+  them instead of inventing numbers.
+
+## D17 — Two marker inks carry "why did this match"
+- Yellow marks terms the keyword leg matched; blue marks the chunk the vector leg returned.
+  Success criterion #4 is "highlighted snippets showing WHY a result matched", and with a
+  hybrid pipeline the honest answer has two cases. The legend is taught on the landing screen
+  before any result is shown.
+
+## D18 — The query parser is mirrored (not moved) into the client
+- `web/lib/query.ts` re-implements enough of the parser to paint chips inside the search box
+  as the user types. `api/app/search/parser.py` stays authoritative and re-parses every query;
+  the client copy is presentational only. Divergence shows up as a wrong chip colour, never as
+  wrong results — but the two should be kept in step.
+
+---
+
+# Phase 2 (Search API)
+
+## D13 — Fuzziness expressed as `AUTO:5,8`, not hand-rolled per-term clauses
+- The requirement is "AUTO on free-text terms of length 5 or more only". Elasticsearch's
+  `AUTO:[low],[high]` already means exactly that: 0 edits below `low`, 1 edit up to `high`,
+  2 above. So one `multi_match` carries the rule instead of splitting the query into per-term
+  clauses and reassembling the scoring.
+  Ref: elastic.co/docs/reference/elasticsearch/rest-apis/common-options#fuzziness
+
+## D14 — Hybrid pagination is a windowed opaque page token, not raw `search_after`
+- **Alternatives:** true `search_after`; native RRF (paid, see D1).
+- **Reason:** fusion happens in the API, so no single ES cursor describes the fused order.
+  Each leg is fetched to `fusion_window` (200), fused, then sliced by an opaque token carrying
+  the offset. This fixes the prototype's hardcoded `size=20` with no pagination (flaw #3) while
+  being honest about its limit: past the window the API stops issuing a `next_page_token` and
+  says so in `warnings`. `search_after` remains available for the non-fused paths if deep
+  pagination is ever needed.
+
+## D15 — `/suggest` avoids `search_as_you_type`
+- **Alternative:** add `search_as_you_type` subfields and reindex to `emails-v2`.
+- **Reason:** that is a mapping change, and a second index alongside `emails-v1` roughly doubles
+  index size — not affordable on this machine right now (the disk filled during Phase 2 and took
+  Docker down). A sanitised terms aggregation (people) plus `match_phrase_prefix` (subjects) gives
+  callers the same behaviour with no reindex. The upgrade is a mapping bump plus one reindex
+  behind the alias whenever disk allows.
+
+## D16 — `total` is the BM25 leg's exact hit count
+- For a hybrid query "how many emails match" is ill-defined. The BM25 leg runs the user's filters
+  and keywords with `track_total_hits: true`, so its total is the meaningful, explainable number.
+  For a filter-only query the leg is `match_all` + filters, which is exactly the filtered count.
+
+## D17 — `/health` reports, never raises
+- It answers even when `app.state` was never populated or the cluster is unreachable, degrading to
+  `status: "degraded"` with a `detail`. A health endpoint that 500s is useless to the thing
+  monitoring it.

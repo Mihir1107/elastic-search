@@ -56,6 +56,33 @@ Every stage is resumable and idempotent: documents are content-addressed, so re-
 upserts rather than duplicates. Data lands in a versioned index (`emails-v1`) and the
 `emails` alias is moved only after the document count and a smoke query pass.
 
+## Search API
+
+```bash
+uv run uvicorn app.main:app --app-dir api --reload    # http://localhost:8000/docs
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /search?q=&size=&page_token=` | the single search box; returns hits, facets, timings |
+| `GET /emails/{id}` | one full email |
+| `GET /threads/{thread_id}` | the whole conversation, in order |
+| `GET /suggest?prefix=` | autocomplete over people and subjects |
+| `GET /health` | API + cluster health, license tier, active index behind the alias |
+
+The search box takes free text, `"quoted phrases"`, `from:`/`to:`/`cc:`/`subject:`
+and `before:`/`after:` — the system builds the query; the user never picks a query type:
+
+```
+raptor partnership from:kenneth.lay@enron.com after:2001-07-01 "hiding losses"
+```
+
+Retrieval runs a BM25 leg and a kNN leg over nested chunk vectors **with the same
+filters**, fuses them with manual RRF (k=60), and returns highlighted snippets —
+falling back to the best-matching chunk for hits only the semantic leg found.
+Every response carries a per-stage `timings` breakdown and echoes back how the
+query was `understood`.
+
 ## Repository layout
 
 ```

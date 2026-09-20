@@ -14,6 +14,8 @@ certs/
 
 # --- Data & models (never commit; see CLAUDE.md) ---
 data/
+# Pooled candidates carry raw email bodies; regenerate with `make eval-pool`.
+eval/pools.json
 models/
 *.tar.gz
 # HuggingFace / torch caches live in ~/.cache by default; keep any local ones out too
@@ -26,6 +28,8 @@ esdata*/
 web/node_modules/
 web/.next/
 web/out/
+web/*.tsbuildinfo
+web/.env.local
 
 # --- OS / editor ---
 .DS_Store

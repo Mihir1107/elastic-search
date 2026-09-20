@@ -1,0 +1,355 @@
+{
+  "written_at": "2026-09-20T19:52:11.959930+00:00",
+  "bench": {
+    "base_url": "http://127.0.0.1:8000",
+    "concurrency": 4,
+    "iterations": 5,
+    "warmup": 5,
+    "size": null,
+    "rerank": false,
+    "timeout_s": 30.0
+  },
+  "chaos": {
+    "container": "elastic-search-es03-1",
+    "before_s": 20.0,
+    "during_s": 40.0,
+    "after_s": 150.0,
+    "poll_interval_s": 1.0,
+    "index_pattern": "emails-*"
+  },
+  "requests": 3654,
+  "failed": 0,
+  "success_rate": 1.0,
+  "gate_met": true,
+  "phases": {
+    "before": {
+      "requests": 1012,
+      "failed": 0,
+      "wall_ms": {
+        "n": 1012,
+        "mean": 78.2,
+        "p50": 67.4,
+        "p95": 156.2,
+        "p99": 178.3,
+        "max": 245.0
+      }
+    },
+    "during": {
+      "requests": 1883,
+      "failed": 0,
+      "wall_ms": {
+        "n": 1883,
+        "mean": 84.7,
+        "p50": 72.1,
+        "p95": 172.9,
+        "p99": 202.1,
+        "max": 270.1
+      }
+    },
+    "after": {
+      "requests": 732,
+      "failed": 0,
+      "wall_ms": {
+        "n": 732,
+        "mean": 152.9,
+        "p50": 118.3,
+        "p95": 337.4,
+        "p99": 840.0,
+        "max": 1665.7
+      }
+    }
+  },
+  "transitions": [
+    {
+      "t": 0.0,
+      "status": "green"
+    },
+    {
+      "t": 21.7,
+      "status": "yellow"
+    },
+    {
+      "t": 87.7,
+      "status": "green"
+    }
+  ],
+  "events": [
+    {
+      "t": 20.3,
+      "event": "docker kill elastic-search-es03-1"
+    },
+    {
+      "t": 60.6,
+      "event": "docker start elastic-search-es03-1"
+    },
+    {
+      "t": 88.6,
+      "event": "cluster returned to green"
+    }
+  ],
+  "promoted_replicas": [
+    "emails-v1/1",
+    "emails-v1/2",
+    "emails-v2/2"
+  ],
+  "shards": {
+    "before": [
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es03"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es03"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es03"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es03"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      }
+    ],
+    "during": [
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "r",
+        "state": "UNASSIGNED",
+        "node": ""
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "r",
+        "state": "UNASSIGNED",
+        "node": ""
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "r",
+        "state": "UNASSIGNED",
+        "node": ""
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "r",
+        "state": "UNASSIGNED",
+        "node": ""
+      }
+    ],
+    "after": [
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "0",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v1",
+        "shard": "2",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "0",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "1",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "r",
+        "state": "STARTED",
+        "node": "es02"
+      },
+      {
+        "index": "emails-v2",
+        "shard": "2",
+        "prirep": "p",
+        "state": "STARTED",
+        "node": "es01"
+      }
+    ]
+  }
+}

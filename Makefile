@@ -49,6 +49,22 @@ spotcheck:  ## Compare 20 parsed documents against their raw maildir files
 stats:  ## Print the per-stage ingestion stats
 	@for f in data/stats/*.json; do echo "--- $$f"; cat $$f; done
 
+eval-pool:  ## Build evaluation candidate pools and auto-grade what rules cover
+	$(UV) run python -m eval.cli pool
+	$(UV) run python -m eval.cli autolabel
+
+eval-label:  ## Hand-label the conceptual queries (resumable)
+	$(UV) run python -m eval.cli label
+
+eval:  ## Measure every retrieval method and write eval/results/<date>.md
+	$(UV) run python -m eval.cli run
+
+eval-baseline:  ## Measure and update the committed baseline
+	$(UV) run python -m eval.cli run --write-baseline
+
+eval-check:  ## Fail if hybrid NDCG@10 regressed >2 points vs the baseline
+	$(UV) run python -m eval.cli check
+
 lint:  ## ruff check
 	$(UV) run ruff check .
 
@@ -70,4 +86,16 @@ test-integration:  ## Integration tests (needs Docker for testcontainers)
 test-all:  ## All tests
 	$(UV) run pytest
 
-.PHONY: help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats lint format format-check typecheck test test-integration test-all
+web-install:  ## Install the frontend dependencies (web/)
+	cd web && npm ci
+
+web:  ## Run the frontend dev server on :3000
+	cd web && npm run dev
+
+web-build:  ## Production build of the frontend
+	cd web && npm run build
+
+web-check:  ## Typecheck the frontend
+	cd web && npm run typecheck
+
+.PHONY: help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all

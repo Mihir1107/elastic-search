@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 
 from elasticsearch import AsyncElasticsearch
 
@@ -139,7 +139,14 @@ async def run_search(
     q: str,
     size: int | None = None,
     page_token: str | None = None,
+    method: Literal["hybrid", "bm25", "vector"] = "hybrid",
 ) -> SearchResponse:
+    """Run the search pipeline.
+
+    ``method`` exists so the evaluation harness can measure each retrieval leg in
+    isolation against exactly the query construction production uses, rather
+    than re-implementing it. The HTTP API always uses the default, "hybrid".
+    """
     started = perf_counter()
     timings = Timings()
 
@@ -175,9 +182,11 @@ async def run_search(
     bm25_response = await es.search(index=settings.emails_alias, preference=preference, **request)
     timings.bm25_ms = round((perf_counter() - t0) * 1000, 2)
 
-    legs: dict[str, list[dict[str, Any]]] = {"bm25": bm25_response["hits"]["hits"]}
+    legs: dict[str, list[dict[str, Any]]] = {}
+    if method in ("hybrid", "bm25"):
+        legs["bm25"] = bm25_response["hits"]["hits"]
 
-    if parsed.semantic_text:
+    if parsed.semantic_text and method in ("hybrid", "vector"):
         t0 = perf_counter()
         vector = embed_query(parsed.semantic_text, settings.embed_model, settings.bge_query_prefix)
         timings.embed_ms = round((perf_counter() - t0) * 1000, 2)

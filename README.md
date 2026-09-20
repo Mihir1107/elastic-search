@@ -83,6 +83,22 @@ falling back to the best-matching chunk for hits only the semantic leg found.
 Every response carries a per-stage `timings` breakdown and echoes back how the
 query was `understood`.
 
+## Relevance evaluation
+
+```bash
+make eval-pool      # run every method, pool candidates, auto-grade what rules cover
+make eval-label     # hand-label the conceptual queries (resumable; --prelabel for LLM hints)
+make eval           # metrics + eval/results/<date>.md
+make eval-baseline  # ... and update the committed baseline
+make eval-check     # fail if hybrid NDCG@10 regressed >2 points (runs in CI)
+```
+
+50 queries (`eval/queries.yaml`) span exact-lookup, person+topic, date-scoped, conceptual and
+typo'd. Where relevance is derivable from the document — a required phrase, a sender, a date
+window — the query declares an objective grading rule, so those judgments are reproducible
+rather than a matter of opinion. Conceptual queries carry no rule and wait for a human.
+Unjudged queries are excluded from the means, never scored as zero.
+
 ## Repository layout
 
 ```

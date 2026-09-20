@@ -53,5 +53,12 @@ jobs:
           uv run pytest -m integration
           code=$?
           set -e
-          if [ $code -eq 5 ]; then echo "No integration tests collected yet (expected pre-Phase 1)."; exit 0; fi
+          if [ $code -eq 5 ]; then echo "No integration tests collected."; exit 0; fi
           exit $code
+
+      - name: Relevance regression gate
+        env:
+          ES_HOST: http://localhost:9200
+        # Fails if hybrid NDCG@10 drops more than 2 points against the committed
+        # baseline. Skips cleanly when the CI cluster holds no indexed mail.
+        run: uv run python -m eval.cli check

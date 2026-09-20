@@ -20,6 +20,8 @@ dev = [
   "pytest-cov==7.1.0",
   "testcontainers==4.15.0",
   "pre-commit==4.6.2",
+  "pyyaml==6.0.3",
+  "types-PyYAML==6.0.12.20260906",
 ]
 
 [tool.ruff]
@@ -44,5 +46,5 @@ ignore_missing_imports = true
 markers = [
   "integration: requires a running Elasticsearch (deselect with -m 'not integration')",
 ]
-testpaths = ["api/tests", "ingest/tests"]
+testpaths = ["api/tests", "ingest/tests", "eval/tests"]
 addopts = "-ra"

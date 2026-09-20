@@ -254,3 +254,32 @@ reports `native_rrf_available: false`. That settles, by observation on the pinne
 conflict noted in D1 between Elastic's subscription page (which lists RRF under Basic) and the
 community reports of `403 current license is non-compliant`. Manual RRF was the right call and
 remains the only fusion path.
+
+---
+
+# Phase 3 (Evaluation)
+
+## D19 — Judge by objective rule where relevance is derivable, by hand where it is not
+- **Alternatives:** label all 50 queries by hand; LLM-label everything.
+- **Reason:** for a known phrase, a named sender or a date window, relevance is a property of
+  the document, not an opinion. Declaring that rule next to the query makes 38 of 50 queries
+  reproducibly judged with no human in the loop and no LLM guesswork. The 12 conceptual queries
+  have no such rule and genuinely need judgment, so they are left for a human. LLM pre-labelling
+  exists behind `--prelabel` as a *suggestion* in the prompt, off by default because it spends
+  credits and because a suggestion anchors the reviewer.
+
+## D20 — Unjudged queries are excluded from the means, never scored zero
+- Scoring an unlabelled query as 0 would silently punish every method for a gap in the labelling
+  and make the baseline drift as labels are added. `evaluate_run` reports the number of queries
+  each mean covers, and the report renders an unjudged category as `--` rather than `0.0000`.
+
+## D21 — The harness runs queries through the real `run_search`
+- A `method` parameter selects which legs contribute ("bm25", "vector", "hybrid"). The evaluation
+  therefore measures the same parsing, filtering and fusion the HTTP API uses, instead of a
+  parallel implementation that would quietly drift from production.
+
+## D22 — Recall@50 is comparative only, because the pool is self-built
+- Judgments come from the union of each method's top 20, so every relevant document is one these
+  systems already found, and hybrid (which fuses both legs) covers most of that union — hence
+  recall near 1.0. It is a fair comparison *between* methods and meaningless as an absolute. The
+  report says so in its own Caveats section rather than leaving the number to be misread.

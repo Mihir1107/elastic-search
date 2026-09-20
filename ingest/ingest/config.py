@@ -37,7 +37,10 @@ class IngestSettings(BaseSettings):
 
     # Corpus source (verified live 2026-09-20; 443,254,787 bytes).
     enron_url: str = "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
-    enron_sha256: str = ""  # pinned in Phase 1 after the first verified download
+    # sha256 of the May 2015 CMU release as downloaded 2026-09-20 (443,254,787 bytes,
+    # matching the server's Content-Length). Pinned so a truncated or corrupted
+    # re-download fails loudly instead of silently ingesting a partial corpus.
+    enron_sha256: str = "b3da1b3fe0369ec3140bb4fbce94702c33b7da810ec15d718b3fadf5cd748ca7"
 
     # Data layout.
     data_dir: Path = Path("data")

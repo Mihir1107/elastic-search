@@ -35,6 +35,7 @@ _QUOTE_MARKERS: tuple[re.Pattern[str], ...] = (
 
 _RE_PREFIX = re.compile(r"^\s*(?:(?:re|fw|fwd|aw|sv)\s*:\s*)+", re.IGNORECASE)
 _WS = re.compile(r"[ \t]+")
+_ADDR_RE = re.compile(r"[\w.\-+']+@[\w.\-]+\.[A-Za-z]{2,}")
 
 
 def split_quoted(body: str) -> tuple[str, str]:
@@ -63,16 +64,31 @@ def normalise_subject(subject: str) -> str:
 
 
 def _addresses(msg: EmailMessage, header: str) -> tuple[list[str], list[str]]:
-    """Return (addresses, display_names) for a header, tolerating malformed values."""
+    """Return (addresses, display_names) for a header, tolerating malformed values.
+
+    ``getaddresses`` cannot parse the Lotus Notes / X.400 distinguished names that
+    appear in this corpus, e.g.
+    ``/o=enron/ou=na/cn=recipients/cn=notesaddr/cn=a478079f-...@enron.com``.
+    Left to itself it drops those recipients entirely, which for an investigation
+    tool silently loses a participant. So anything address-shaped that the strict
+    parse missed is recovered from the raw header text and appended.
+    """
     raw = msg.get_all(header)
     if not raw:
         return [], []
+    values = [str(v) for v in raw]
     try:
-        pairs = getaddresses([str(v) for v in raw])
+        pairs = getaddresses(values)
     except (ValueError, TypeError):
-        return [], []
+        pairs = []
     addrs = [a.strip() for _, a in pairs if a and "@" in a]
     names = [n.strip() for n, _ in pairs if n and n.strip()]
+
+    seen = {a.lower() for a in addrs}
+    for candidate in _ADDR_RE.findall(" ".join(values)):
+        if candidate.lower() not in seen:
+            seen.add(candidate.lower())
+            addrs.append(candidate)
     return addrs, names
 
 

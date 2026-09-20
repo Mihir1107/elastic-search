@@ -9,7 +9,9 @@ Usage: uv run python scripts/spotcheck.py [N]
 
 from __future__ import annotations
 
+import base64
 import json
+import quopri
 import re
 import sys
 from pathlib import Path
@@ -21,10 +23,20 @@ from ingest.config import get_settings
 _ADDR = re.compile(r"[\w.\-+']+@[\w.\-]+")
 
 
+def _text(path: Path) -> str:
+    """Decode and normalise line endings.
+
+    Enron messages use CRLF for the real headers while forwarded blocks quoted in
+    the body often use bare LF. Splitting on "\n\n" without normalising finds the
+    wrong boundary and mistakes the forwarded block's From:/Subject: lines for the
+    message headers.
+    """
+    return path.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
 def raw_headers(path: Path) -> dict[str, str]:
     """Crude header split: everything before the first blank line."""
-    raw = path.read_bytes().decode("utf-8", errors="replace")
-    head, _, _ = raw.partition("\n\n")
+    head, _, _ = _text(path).partition("\n\n")
     headers: dict[str, str] = {}
     current = ""
     for line in head.splitlines():
@@ -38,9 +50,21 @@ def raw_headers(path: Path) -> dict[str, str]:
     return headers
 
 
-def raw_body(path: Path) -> str:
-    raw = path.read_bytes().decode("utf-8", errors="replace")
-    _, _, body = raw.partition("\n\n")
+def raw_body(path: Path, headers: dict[str, str]) -> str:
+    """Raw body, decoded per Content-Transfer-Encoding.
+
+    Uses stdlib quopri/base64 rather than ingest.parse, so the comparison stays
+    independent while still being apples-to-apples: the parser stores decoded
+    text, so an undecoded raw body would report bogus mismatches (e.g. "=09").
+    """
+    _, _, body = _text(path).partition("\n\n")
+    cte = headers.get("content-transfer-encoding", "").strip().lower()
+    if cte == "quoted-printable":
+        return quopri.decodestring(body.encode("utf-8", "replace")).decode("utf-8", "replace")
+    if cte == "base64":
+        return base64.b64decode(body.encode("utf-8", "replace"), validate=False).decode(
+            "utf-8", "replace"
+        )
     return body
 
 
@@ -74,7 +98,7 @@ def check(doc: dict[str, object], maildir: Path) -> list[str]:
 
     # Body + quoted_text should together account for the raw body's first line.
     combined = f"{doc.get('body') or ''}\n{doc.get('quoted_text') or ''}"
-    first = next((ln.strip() for ln in raw_body(path).splitlines() if ln.strip()), "")
+    first = next((ln.strip() for ln in raw_body(path, headers).splitlines() if ln.strip()), "")
     if first and first not in combined:
         problems.append(f"first body line missing from body+quoted: {first[:60]!r}")
     return problems

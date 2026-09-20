@@ -67,8 +67,17 @@ def _sha256_of(path: Path) -> str:
 
 
 def _mailbox_of(member_name: str) -> str | None:
+    """Mailbox owner for a *message file* member (maildir/<owner>/<folder>/<file>)."""
     parts = Path(member_name).parts
     if len(parts) < 3 or parts[0] != _ROOT:
+        return None
+    return parts[1]
+
+
+def _member_mailbox(member_name: str) -> str | None:
+    """Mailbox owner for any member, including the owner directory itself."""
+    parts = Path(member_name).parts
+    if len(parts) < 2 or parts[0] != _ROOT:
         return None
     return parts[1]
 
@@ -109,11 +118,10 @@ def extract(archive: Path, raw: Path, wanted: set[str] | None) -> int:
     with tarfile.open(archive, "r|gz") as tar:
         for member in tar:
             if wanted is not None:
-                mailbox = _mailbox_of(member.name)
-                if member.isfile():
-                    if mailbox is None or mailbox not in wanted:
-                        continue
-                elif mailbox is not None and mailbox not in wanted:
+                # Applies to directories too, so unwanted mailboxes leave no empty
+                # husks behind. Intermediate dirs are created by extract() anyway.
+                mailbox = _member_mailbox(member.name)
+                if mailbox is None or mailbox not in wanted:
                     continue
             tar.extract(member, raw, filter="data")
             if member.isfile():

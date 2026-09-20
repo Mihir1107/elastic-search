@@ -159,3 +159,25 @@ def test_dev_subset_selection_is_deterministic_and_exact(tmp_path: Path) -> None
 
     everything = select_message_files(maildir, "full", 25)
     assert len(everything) == 40
+
+
+NOTES_DN = """Message-ID: <notes-dn@enron.com>
+Date: Wed, 17 Oct 2001 18:32:27 -0000
+From: jae.black@enron.com
+To: /o=enron/ou=na/cn=recipients/cn=notesaddr/cn=a478079f-612229@enron.com,
+\twilliam.abler@enron.com
+Subject: FW: Operation Clean Sweep
+
+Body.
+"""
+
+
+def test_lotus_notes_distinguished_names_are_not_dropped(tmp_path: Path) -> None:
+    """getaddresses cannot parse X.400/Notes DNs; the recipient must still survive."""
+    maildir = tmp_path / "maildir"
+    path = _write(maildir, "forney-j/inbox/6.", NOTES_DN)
+    doc = parse_message(path, maildir)
+
+    assert "william.abler@enron.com" in doc["to"]
+    recovered = [a for a in doc["to"] if "a478079f-612229@enron.com" in a]
+    assert recovered, f"Notes DN recipient was dropped: {doc['to']}"

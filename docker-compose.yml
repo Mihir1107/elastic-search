@@ -10,7 +10,7 @@
 #   kibana           kibana              -> `make up-kibana`
 #
 # Security is ON in every profile so the Python client config is identical
-# whether you run 1 node or 3 (kickoff decision #5).
+# whether you run 1 node or 3 (DECISIONS D5).
 
 services:
   # ----------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 /**
  * Wire types for the Ledger search API.
  *
- * These mirror the endpoint contract in CLAUDE_CODE_KICKOFF.md section 6. The
+ * These mirror the endpoint contract in docs/SPEC.md section 6. The
  * backend (Phase 2) is not built yet, so `lib/mock/engine.ts` implements the
  * same shapes in the browser. When the real API lands, only `lib/api.ts`
  * changes — every component here is already speaking the final contract.

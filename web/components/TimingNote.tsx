@@ -3,7 +3,7 @@
 /**
  * How long the search took, and where the time went.
  *
- * The API returns a per-stage breakdown on every response and the kickoff asks
+ * The API returns a per-stage breakdown on every response and the spec asks
  * for a timing panel, so it sits in the open: on this product "why is this
  * slow" is a question the operator asks constantly.
  */

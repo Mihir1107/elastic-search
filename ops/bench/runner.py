@@ -16,7 +16,16 @@ import yaml
 
 #: Stage timings the API reports (app/models.py: Timings). Kept explicit rather
 #: than discovered from the payload so a renamed stage fails loudly here.
-STAGES = ("parse_ms", "embed_ms", "bm25_ms", "knn_ms", "fuse_ms", "rerank_ms", "total_ms")
+STAGES = (
+    "parse_ms",
+    "embed_ms",
+    "bm25_ms",
+    "knn_ms",
+    "fuse_ms",
+    "highlight_ms",
+    "rerank_ms",
+    "total_ms",
+)
 
 
 @dataclass(frozen=True)

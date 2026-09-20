@@ -1,6 +1,6 @@
 """Stage 1: download + checksum + extract the Enron corpus.
 
-Resumable and idempotent (kickoff section 5):
+Resumable and idempotent (docs/SPEC.md section 4):
 
 * the archive streams to a ``.part`` file and is renamed only on success, and a
   restart continues from what is already on disk via an HTTP Range request, so

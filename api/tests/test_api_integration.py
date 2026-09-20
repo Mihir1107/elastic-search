@@ -1,10 +1,11 @@
-"""End-to-end API tests against the live cluster and the real dev-subset index.
+"""End-to-end API tests against the live cluster and whatever index the alias serves.
 
 Marked ``integration``: needs Elasticsearch with the ``emails`` alias populated.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -32,7 +33,11 @@ def test_health_reports_cluster_license_and_active_index(client: TestClient) -> 
     assert body["number_of_nodes"] >= 1
     # The product targets Basic and must not silently rely on a paid tier.
     assert body["license_tier"] == "basic"
-    assert body["active_index"] == ["emails-v1"]
+    # Exactly one concrete index behind the alias, and it is versioned. Asserting
+    # a specific version would fail every time the corpus is reindexed, which is
+    # the normal path (write emails-vN, verify, flip the alias).
+    assert len(body["active_index"]) == 1
+    assert re.fullmatch(r"emails-v\d+", body["active_index"][0]), body["active_index"]
     assert isinstance(body["native_rrf_available"], bool)
 
 
@@ -301,3 +306,29 @@ def test_health_reports_shards_and_document_count(client: TestClient) -> None:
     body = client.get("/health").json()
     assert body["docs"] and body["docs"] > 0
     assert body["active_shards"] and body["active_shards"] > 0
+
+
+def test_deep_pagination_at_ui_page_size_never_repeats(client: TestClient) -> None:
+    """Regression: the fusion window must not grow with the page.
+
+    The UI pages at size 20. With a per-page window the second page was fused
+    from a larger candidate set than the first, which re-ranked everything and
+    returned documents page one had already shown (React reported duplicate
+    keys for real document ids).
+    """
+    seen: list[str] = []
+    token: str | None = None
+    for page in range(5):
+        params: dict[str, Any] = {"q": "california power crisis", "size": 20}
+        if token:
+            params["page_token"] = token
+        body = client.get("/search", params=params).json()
+        ids = [h["id"] for h in body["hits"]]
+        assert ids, f"page {page} returned nothing"
+        repeats = sorted(set(ids) & set(seen))
+        assert not repeats, f"page {page} repeated {len(repeats)} result(s): {repeats[:3]}"
+        seen.extend(ids)
+        token = body["next_page_token"]
+        if not token:
+            break
+    assert len(seen) == len(set(seen))

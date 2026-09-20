@@ -1,6 +1,6 @@
 """Stage 2: parse maildir messages with Python's ``email`` stdlib.
 
-Deliberately NOT string splitting (kickoff flaw #11). Extracts message ids,
+Deliberately NOT string splitting (spec flaw #11). Extracts message ids,
 threading headers, all recipient lists including CC/BCC, a UTC ISO-8601 date,
 the subject, the body with quoted replies split into ``quoted_text``, the
 mailbox owner / folder path, and any attachment names. Messages that cannot be
@@ -112,20 +112,44 @@ def _parse_date(raw: str) -> tuple[str | None, str | None]:
     return dt.astimezone(UTC).isoformat(), None
 
 
+#: The CALO release carries mangled smart punctuation: the original character
+#: survives as a control byte followed by an ASCII tail, so an apostrophe reads
+#: as "Enron\x01,s" and renders as "Enron ,s". Measured on the dev corpus: 131
+#: of 20,001 documents, mostly this apostrophe plus runs of NUL padding.
+#: Repaired here rather than at display time so the indexed text is right too.
+_MOJIBAKE = (
+    ("\x01,", "\u2019"),  # right single quote  -> Enron's
+    ("\x01'", "\u2019"),
+    ("\x018", "\u2019"),  # same source character, different mangled tail
+)
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def clean_text(text: str) -> str:
+    """Repair known mangled punctuation and drop leftover control bytes.
+
+    Tabs, newlines and carriage returns are deliberately kept: the bodies are
+    plain text and their line structure is what the reading pane renders.
+    """
+    for bad, good in _MOJIBAKE:
+        text = text.replace(bad, good)
+    return _CONTROL.sub("", text)
+
+
 def _body_text(msg: EmailMessage) -> str:
     try:
         part = msg.get_body(preferencelist=("plain",))
         if part is not None:
             content = part.get_content()
             if isinstance(content, str):
-                return content
+                return clean_text(content)
     except (KeyError, LookupError, ValueError, TypeError):
         pass
     payload = msg.get_payload(decode=True)
     if isinstance(payload, bytes):
-        return payload.decode("utf-8", errors="replace")
+        return clean_text(payload.decode("utf-8", errors="replace"))
     raw = msg.get_payload()
-    return raw if isinstance(raw, str) else ""
+    return clean_text(raw) if isinstance(raw, str) else ""
 
 
 def _attachments(msg: EmailMessage) -> list[str]:

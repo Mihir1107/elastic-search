@@ -1,4 +1,4 @@
-"""Facet aggregations (kickoff flaw #3: the prototype had none)."""
+"""Facet aggregations (spec flaw #3: the prototype had none)."""
 
 from __future__ import annotations
 

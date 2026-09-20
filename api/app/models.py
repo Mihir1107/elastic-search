@@ -13,13 +13,14 @@ class Facet(BaseModel):
 
 
 class Timings(BaseModel):
-    """Per-stage latency. Every response carries one (kickoff section 6)."""
+    """Per-stage latency. Every response carries one (docs/SPEC.md section 5)."""
 
     parse_ms: float = 0.0
     embed_ms: float = 0.0
     bm25_ms: float = 0.0
     knn_ms: float = 0.0
     fuse_ms: float = 0.0
+    highlight_ms: float = 0.0
     rerank_ms: float = 0.0
     total_ms: float = 0.0
 

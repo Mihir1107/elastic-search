@@ -97,7 +97,7 @@ Worth knowing before anyone "fixes" a threading bug that isn't there.
 
 ## F2 — ~26% of messages are cross-mailbox duplicates
 10,000 parsed messages collapse to 7,355 unique documents. This is exactly the duplication the
-kickoff calls out, and it is why the canonical content-hash `_id` matters.
+spec calls out, and it is why the canonical content-hash `_id` matters.
 
 ## F3 — Lotus Notes / X.400 distinguished names appear in recipient headers
 e.g. `/o=enron/ou=na/cn=recipients/cn=notesaddr/cn=<id>@enron.com`. `email.utils.getaddresses`
@@ -121,7 +121,7 @@ prose rather than an address (`To: All Enron Employees:`). Counted, not dropped.
 
 ## D13 — `web/` is Next.js 15 App Router + React 19 + Tailwind v4, pinned exactly
 - **Alternatives:** Vite SPA (leaner, no server layer); Streamlit (explicitly ruled out).
-- **Reason:** matches the architecture committed in the kickoff (section 3) and keeps a
+- **Reason:** matches the architecture committed in the spec (section 3) and keeps a
   server-side seam for the API host. Versions are pinned with exact numbers, matching the
   Python side's `==` convention.
 
@@ -302,8 +302,8 @@ Every change below had to earn its place with a number, and two of them did not.
   overrule it. `rerank_free_text_only` skips reranking for those queries, and with that gate the
   harm to every explicit-signal category disappears.
 
-## D24 — BM25 subject boost lowered from ^3 to ^1, contradicting the kickoff
-- The kickoff prescribes `subject^3`. Measured on the judged set the effect is monotone and the
+## D24 — BM25 subject boost lowered from ^3 to ^1, contradicting the spec
+- The spec prescribes `subject^3`. Measured on the judged set the effect is monotone and the
   prescription is simply too aggressive: `^5` -0.020, `^3` baseline, `^2` +0.017, `^1` +0.021
   NDCG@10 (and `^1` is +0.060 MRR). `subject^1` dominates on both metrics, so it wins.
 - **Caveat, stated plainly:** the grading rules treat a match in the subject and a match in the
@@ -334,7 +334,7 @@ Every change below had to earn its place with a number, and two of them did not.
 Per-stage p50 on the dev subset: parse 0.0ms, embed ~30ms, kNN ~24ms, fuse 0.3ms, BM25 ~170ms --
 and isolating the BM25 leg shows essentially all of it is highlighting: the same query costs
 **84ms without highlighting and 1885ms with it** at size 200, ~46ms vs ~394ms at size 20.
-Current p95 is ~570ms against the kickoff's 300ms target, so this is the thing to attack in
+Current p95 is ~570ms against the spec's 300ms target, so this is the thing to attack in
 Phase 6. Term vectors are not the answer (D26); the promising directions are highlighting only
 the page (which needs a cheaper second pass than the one measured here, since an extra round
 trip cost more than it saved) or a smaller `fragment_size`/field set validated by measurement.
@@ -344,7 +344,7 @@ trip cost more than it saved) or a smaller `fragment_size`/field set validated b
 # Phase 6 (Scale + HA)
 
 ## D27 — Corpus scope is 100k messages, not the full 517k, and that is a stated shortfall
-- **Kickoff criteria #1 and #8 say "the full corpus"; this does not meet them.** Recorded as a
+- **Spec criteria #1 and #8 say "the full corpus"; this does not meet them.** Recorded as a
   deliberate choice rather than a redefinition.
 - **Measured, not estimated:** `emails-v1` holds 7,355 emails in **42.6 MB of primaries /
   85.1 MB with the replica** (19,104 Lucene docs = 7,355 parents + 11,749 nested chunks). So the
@@ -444,7 +444,7 @@ Measured directly against Elasticsearch, same BM25 query, varying one thing at a
 | `max_analyzed_offset` 100k -> 10k | — | 145.8 ms |
 
 Every knob is within noise; only the **document count** matters (~0.8 ms per document). This
-closes the directions HANDOFF §3.3 listed as untried and promising — smaller `fragment_size`,
+closes the directions the earlier highlighting notes listed as untried and promising — smaller `fragment_size`,
 fewer fragments, a reduced field set. None of them earn anything. (`fvh` is separately ruled
 out: it *requires* term vectors, which D26 measured and reverted.)
 
@@ -494,7 +494,7 @@ Hybrid improved, but BM25 improved more and now leads it by 0.0095 NDCG@10. **Th
 evidence that fusion is not worth it**, and should not be acted on as if it were: the 38 judged
 queries are graded by phrase / sender / date rules (D19), which is exactly what BM25 is good at,
 and a bigger corpus gives those rules more true positives to find. The vector leg's contribution
-is measured entirely on its worst terrain, as HANDOFF §3.5 warned.
+is measured entirely on its worst terrain, as the evaluation caveats (D22) warned.
 
 The 12 conceptual queries remain unlabelled, and they are the ones that would test the other
 side. Until they are labelled, the honest statement is "BM25 leads on a lexically-graded query
@@ -514,3 +514,57 @@ before, 172.9 ms during the outage, 337.4 ms after the restart**. The expensive 
 recovery competing for I/O, not the degraded cluster. Steady-state p95 is unaffected, and no
 request failed in any phase — but "after" is the window where a naive benchmark would record a
 breach of the 300 ms target.
+
+## D32 — The fusion window is constant per query, and the page is highlighted separately
+- **Bug:** page two of a search repeated results from page one. Found by driving the
+  real UI, which pages at size 20; React reported duplicate keys carrying real document ids.
+- **Cause:** `window = min(max(offset + page_size, page_size), fusion_window)` grew the
+  candidate set with the page. RRF scores a document against whatever it was fused with, so
+  `fused[20:40]` taken from a 40-document window is not a continuation of `fused[0:20]` taken
+  from a 20-document window — the whole list re-ranks. The existing regression test walked three
+  pages at size **5** and passed; at the size the UI actually uses, page two repeated **9 of 20**.
+- **Fix, part one:** the window is now `fusion_window`, a constant for the query.
+- **That alone broke the latency gate.** Every query then fetched and highlighted the full
+  window: p95 at concurrency 4 went **157.8 ms -> 907.3 ms** (and 364.9 ms even at a window of 60).
+- **Fix, part two:** highlighting moved off the retrieval query. Fusion needs a wide candidate
+  set; highlighting needs only the page. The leg is fetched bare and a second, `ids`-filtered
+  query highlights just the returned page, reported as its own `highlight_ms`.
+
+  | configuration | p95 @ c=4 | correct pagination |
+  |---|---:|---|
+  | variable window, highlight all (before) | 157.8 ms | **no** |
+  | constant window 200, highlight all | 907.3 ms | yes |
+  | constant window 200, highlight the page | 294.9 ms | yes |
+  | **constant window 120, highlight the page** | **220.5 ms** | yes |
+
+- **This is the "highlight only the page" idea that was previously tried and reverted** as
+  223 ms -> 422 ms. It loses when the wide query still highlights everything and the second query
+  is pure overhead; it wins decisively once the wide query stops highlighting at all. The earlier
+  result was real, and so is this one — they were measuring different things.
+- `fusion_window` is **120**: six pages of 20, and the best p95 of the sizes measured.
+- **Relevance improved**: hybrid NDCG@10 **0.8992 -> 0.9079** after re-pooling, because a
+  constant, wider window fuses a better candidate set. The bm25/hybrid gap narrows from 0.0095
+  to 0.0008.
+
+## F18 — This corpus has no attachments at all, and that is correct
+`has_attachment` is false for all 52,219 documents and no document carries an attachment name.
+Verified against the raw maildir: **0 of 3,000 sampled messages** contain
+`Content-Disposition: attachment`, and only one is multipart. The CALO release stripped
+attachments and kept the `X-FileName` header (the Notes database, e.g. `jarnold.nsf`), not the
+files. The Attachments facet is therefore always empty and the UI says so. Like the threading
+headers in F1, this is the corpus, not a bug — do not "fix" it.
+
+## F19 — The cross-encoder's first call costs ~8.8 seconds
+Toggling Rerank in the UI took **8,796 ms** the first time and **569 ms** warm (against 255 ms
+with reranking off). The difference is the model loading lazily on first use. Reranking is off by
+default (D25), so the API does not pay that at startup; the cost lands on whoever turns it on
+first. Left lazy deliberately — an off-by-default feature should not slow every boot — but the
+first-use latency is real and the UI shows a pending state through it.
+
+## D33 — Mangled smart punctuation is repaired at ingest, and defensively at display
+The CALO release stores a right single quote as a control byte plus an ASCII tail, so "Enron's"
+arrives as `Enron\x01,s` and paints as "Enron ,s". Measured at **131 of 20,001 documents**.
+`ingest.parse.clean_text` repairs it at the source so the indexed text is right; `lib/format.ts`
+repeats the repair for display because the serving index predates the parser fix. A full reindex
+for 0.65% of documents was not judged worth ~50 minutes of re-embedding — the display fix makes
+it invisible now, and the next ingest fixes it properly.

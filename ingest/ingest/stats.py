@@ -2,7 +2,7 @@
 
 Every stage writes ``data/stats/<stage>.json``. Failures and skips are always
 counted against a named reason and never silently dropped
-(CLAUDE_CODE_KICKOFF.md section 5).
+(docs/SPEC.md section 4).
 """
 
 from __future__ import annotations

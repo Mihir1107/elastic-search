@@ -1,7 +1,7 @@
 """Stage 3: normalise addresses and assign ``person_id``.
 
 Addresses are lowercased and de-duplicated while preserving order. ``person_id``
-is kept deliberately simple for the MVP (kickoff section 5): the exact
+is kept deliberately simple for the MVP (docs/SPEC.md section 4): the exact
 normalised sender address, with the X-From display name retained alongside it so
 a richer alias map can be layered on later without reindexing the raw fields.
 """

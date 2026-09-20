@@ -1,7 +1,7 @@
 """Ledger ingestion CLI.
 
 Each stage is resumable and idempotent and writes ``data/stats/<stage>.json``
-(CLAUDE_CODE_KICKOFF.md section 5). Heavy imports (sentence-transformers,
+(docs/SPEC.md section 4). Heavy imports (sentence-transformers,
 elasticsearch) are done inside the commands so ``--help`` stays fast.
 """
 

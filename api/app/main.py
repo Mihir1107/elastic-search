@@ -4,7 +4,7 @@ On startup the app reports the Elasticsearch version and the license tier, and
 empirically probes whether the native ``rrf`` retriever is usable on this
 cluster. Fusion always uses manual RRF regardless of the answer -- the probe
 exists so the licensing question is settled by observation and visible in the
-logs, never depended upon (kickoff section 4, DECISIONS D1).
+logs, never depended upon (docs/SPEC.md section 3, DECISIONS D1).
 """
 
 from __future__ import annotations

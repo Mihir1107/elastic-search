@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print cluster health and the active license tier (kickoff §4).
+# Print cluster health and the active license tier (docs/SPEC.md section 3).
 set -euo pipefail
 set -a; source .env; set +a
 port="${ES_PORT:-9200}"

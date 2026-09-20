@@ -54,3 +54,18 @@ export function recipients(to: string[], limit = 2): string {
   if (names.length <= limit) return names.join(", ");
   return `${names.slice(0, limit).join(", ")} and ${names.length - limit} more`;
 }
+
+/**
+ * Repair the CALO corpus's mangled smart punctuation for display.
+ *
+ * The raw maildir stores a right single quote as a control byte plus an ASCII
+ * tail, so "Enron's" arrives as "Enron\x01,s" and paints as "Enron ,s". The
+ * ingest parser now repairs this at the source, but the serving index predates
+ * that fix, so the UI cleans what it is given. Harmless once the index is
+ * rebuilt — there is simply nothing left to replace.
+ */
+export function cleanText(text: string): string {
+  return text
+    .replace(/\u0001[,'8]/g, "’")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
+}

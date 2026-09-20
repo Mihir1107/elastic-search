@@ -1,6 +1,6 @@
 """Kill a node under live load, then show the cluster absorb it and recover.
 
-The sequence (CLAUDE_CODE_KICKOFF.md section 8):
+The sequence (docs/SPEC.md section 8):
   1. load runs against the API while the cluster is green
   2. ``docker kill`` one node -- an abrupt SIGKILL, not a graceful shutdown
   3. load continues while the cluster is yellow and a replica is promoted

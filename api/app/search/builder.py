@@ -1,6 +1,6 @@
 """Build Elasticsearch requests from a ParsedQuery.
 
-Two retrieval legs share the SAME filters (kickoff flaw #12: the prototype ran
+Two retrieval legs share the SAME filters (spec flaw #12: the prototype ran
 kNN unfiltered, so hybrid results ignored the facets the user had selected).
 Nothing here ever emits a wildcard/regexp/query_string clause, so user input
 carries no query-language meaning (flaw #13).

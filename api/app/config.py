@@ -1,7 +1,7 @@
 """Application settings loaded from environment / .env.
 
 Central config kills the prototype's hardcoded ``localhost:9200`` and disabled
-security (kickoff flaw #7). Nothing here connects to Elasticsearch.
+security (spec flaw #7). Nothing here connects to Elasticsearch.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     #: that intent should not be overridden by a semantic reranker. Measured:
     #: see eval/results/ and DECISIONS D23.
     rerank_free_text_only: bool = True
-    #: How many fused results the cross-encoder rescores (kickoff: top 50).
+    #: How many fused results the cross-encoder rescores (spec: top 50).
     rerank_window: int = 50
     #: BM25 field boosts, configurable so tuning sweeps need no code change.
-    #: Tuned in Phase 4. The kickoff prescribed subject^3; measured on the judged
+    #: Tuned in Phase 4. The spec prescribed subject^3; measured on the judged
     #: set that is too aggressive, and the effect is monotone: ^5 -0.020,
     #: ^3 baseline, ^2 +0.017, ^1 +0.021 NDCG@10 (and ^1 is +0.060 MRR). The
     #: best-measured value wins rather than a theoretical preference for boosting
@@ -61,7 +61,12 @@ class Settings(BaseSettings):
     max_page_size: int = 50
     #: How deep each retrieval leg goes before fusion. Manual RRF happens in the
     #: API, so this bounds both cost and how far pagination can walk.
-    fusion_window: int = 200
+    #: Candidates fetched per leg, and the depth pagination can reach. Constant
+    #: per query: RRF ranks a document against whatever it was fused with, so a
+    #: window that grew with the page made page two repeat page one (D32).
+    #: 120 measured best against the 300ms p95 target once highlighting moved
+    #: off this query: p95 220.5ms at concurrency 4 versus 294.9ms at 200.
+    fusion_window: int = 120
     knn_num_candidates: int = 200
     #: Load the embedding model at startup so the first query is not slow.
     warm_model: bool = True

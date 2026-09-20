@@ -1,7 +1,7 @@
 """Optional LLM-assisted pre-labelling for the conceptual queries.
 
 Strictly a *suggestion* shown as the default in the labelling prompt -- the
-human still decides, which is the point of the kickoff's "I will review the
+human still decides, which is the point of the spec's "I will review the
 judgments by hand". Off unless you pass --prelabel, because it spends API
 credits and because an automatic suggestion anchors the reviewer.
 

@@ -1,6 +1,6 @@
 """Startup license checks.
 
-The kickoff requires the API to report the license tier at startup and to never
+The spec requires the API to report the license tier at startup and to never
 depend on a paid feature. We fuse with manual RRF regardless (DECISIONS D1), but
 we also *empirically* ask this cluster whether the native ``rrf`` retriever is
 usable, so the ambiguity in the docs is settled by observation and recorded in

@@ -1,7 +1,7 @@
 """Ingestion settings + data-directory layout, from environment / .env.
 
 All ``data/`` paths are gitignored. Stages read/write staged JSONL under these
-directories and emit stats JSON to ``stats_dir`` (see CLAUDE_CODE_KICKOFF.md §5).
+directories and emit stats JSON to ``stats_dir`` (see docs/SPEC.md section 4).
 """
 
 from __future__ import annotations

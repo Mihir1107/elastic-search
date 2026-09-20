@@ -1,12 +1,12 @@
 """Stage 6: chunk bodies and compute chunk vectors.
 
-Resumable by design (kickoff section 3): vectors are appended to the output as
+Resumable by design (docs/SPEC.md section 4): vectors are appended to the output as
 they are produced and a resumed run skips ids already present, so a long
 full-corpus run can be interrupted and continued.
 
 Chunking uses the embedding model's own tokenizer (~200 tokens with overlap)
 because BAAI/bge-small-en-v1.5 truncates around 512 tokens -- embedding a whole
-body would silently discard most of a long email (kickoff flaw #10). Batched
+body would silently discard most of a long email (spec flaw #10). Batched
 encoding replaces the prototype's per-document update loop (flaw #9).
 
 Passage vectors are stored WITHOUT the BGE instruction prefix; that prefix is

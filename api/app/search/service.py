@@ -172,7 +172,12 @@ async def run_search(
     page_size = min(size or settings.default_page_size, settings.max_page_size)
     page_size = max(1, page_size)
     offset = decode_page_token(page_token)
-    window = min(max(offset + page_size, page_size), settings.fusion_window)
+    # The fusion window is a constant for a query, never a function of the page.
+    # RRF ranks a document against the other candidates it was fused with, so
+    # growing the window per page reshuffles the whole list: fused[20:40] taken
+    # from a 40-document window is not a continuation of fused[0:20] taken from
+    # a 20-document window, and page two repeats results page one already showed.
+    window = settings.fusion_window
 
     filters = build_filters(parsed)
     if structured is not None:
@@ -180,12 +185,16 @@ async def run_search(
         filters = filters + build_structured_filters(structured)
     bm25_query = build_bm25_query(parsed, filters, settings.bm25_fields)
 
+    # No highlighting on the retrieval leg. Fusion needs a wide candidate set,
+    # highlighting needs only the page that is actually returned, and the cost
+    # of highlighting is per document: measured on this corpus at size 200 it is
+    # 8.6ms without and 158.8ms with. So the window is fetched bare and the page
+    # is highlighted by a second, id-filtered query below.
     request: dict[str, Any] = {
         "query": bm25_query,
         "size": window,
         "_source": {"includes": _SOURCE_FIELDS},
         "aggs": facets_mod.build_aggs(),
-        "highlight": HIGHLIGHT,
         "track_total_hits": True,
     }
     tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
@@ -234,7 +243,7 @@ async def run_search(
     timings.fuse_ms = round((perf_counter() - t0) * 1000, 2)
 
     # Reranking is a request flag over a config default, and its cost is reported
-    # separately so it can never hide inside total_ms (kickoff section 6).
+    # separately so it can never hide inside total_ms (docs/SPEC.md section 5).
     use_rerank = settings.rerank_enabled if rerank is None else rerank
     if use_rerank and settings.rerank_free_text_only and (parsed.phrases or parsed.has_filters):
         # The user gave an explicit precision signal; do not let a semantic
@@ -253,6 +262,25 @@ async def run_search(
         timings.rerank_ms = round((perf_counter() - t0) * 1000, 2)
 
     page = fused[offset : offset + page_size]
+
+    # Highlight exactly the page. Only documents the keyword leg matched can
+    # carry keyword highlights; a semantic-only hit keeps its chunk snippet.
+    highlight_ids = [hit.doc_id for hit in page if "bm25" in hit.ranks]
+    if highlight_ids:
+        t0 = perf_counter()
+        highlight_response = await es.search(
+            index=settings.emails_alias,
+            query={"bool": {"must": [bm25_query], "filter": [{"ids": {"values": highlight_ids}}]}},
+            size=len(highlight_ids),
+            source=False,
+            highlight=HIGHLIGHT,
+            preference=preference,
+        )
+        fragments = {h["_id"]: h.get("highlight") or {} for h in highlight_response["hits"]["hits"]}
+        for hit in page:
+            if hit.doc_id in fragments:
+                hit.highlight = fragments[hit.doc_id]
+        timings.highlight_ms = round((perf_counter() - t0) * 1000, 2)
 
     next_token = (
         encode_page_token(offset + page_size)

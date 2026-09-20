@@ -77,7 +77,7 @@ def test_parses_all_recipient_lists_and_utc_date(tmp_path: Path) -> None:
     doc = parse_message(path, maildir)
 
     assert doc["from"] == "phillip.allen@enron.com"
-    # CC and BCC must survive (kickoff flaw #11: the prototype dropped CC).
+    # CC and BCC must survive (spec flaw #11: the prototype dropped CC).
     assert doc["to"] == ["tim.belden@enron.com", "john.doe@ENRON.com"]
     assert doc["cc"] == ["Jeff.Skilling@enron.com"]
     assert doc["bcc"] == ["ken.lay@enron.com"]
@@ -181,3 +181,21 @@ def test_lotus_notes_distinguished_names_are_not_dropped(tmp_path: Path) -> None
     assert "william.abler@enron.com" in doc["to"]
     recovered = [a for a in doc["to"] if "a478079f-612229@enron.com" in a]
     assert recovered, f"Notes DN recipient was dropped: {doc['to']}"
+
+
+RSQUO = chr(0x2019)  # right single quotation mark, spelled out to stay ASCII-only
+
+
+def test_clean_text_repairs_mangled_apostrophes() -> None:
+    """The CALO release stores a smart quote as a control byte plus an ASCII tail."""
+    from ingest.parse import clean_text
+
+    assert clean_text("California\x01,s power crisis") == f"California{RSQUO}s power crisis"
+    assert clean_text("Enron\x01's") == f"Enron{RSQUO}s"
+
+
+def test_clean_text_drops_control_bytes_but_keeps_layout() -> None:
+    from ingest.parse import clean_text
+
+    assert clean_text("pad\x00\x00\x00end") == "padend"
+    assert clean_text("keep\ttabs\nand\r\nnewlines") == "keep\ttabs\nand\r\nnewlines"

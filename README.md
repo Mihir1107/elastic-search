@@ -44,7 +44,9 @@ a polished investigation UI:
 | **Evaluation** | 50-query relevance harness with auto-grading rules, NDCG@10/MRR/Recall metrics, CI regression gating |
 | **Operations** | Latency benchmarking, chaos testing (kill-under-load HA), snapshot & restore |
 
-All phases (0–6) are **complete**. See `DECISIONS.md` for the full decision log.
+> **Status**: Phases 0–5 complete. **Phase 6 (Scale & HA)** is in progress —
+> 100k corpus ingested (52,219 unique emails), latency and chaos gates passed,
+> snapshot/restore verification remaining. See `DECISIONS.md` for the decision log.
 
 ---
 
@@ -82,7 +84,7 @@ Enron Tarball (1.4 GB)
 └───────────────────────────────────────────────────────────────────────────────┘
     │
     ▼
-Versioned Index (emails-v1) ──▶ Alias (emails) ──▶ Search API
+Versioned Index (emails-v2) ──▶ Alias (emails) ──▶ Search API
 ```
 
 ---
@@ -211,6 +213,10 @@ make stats          # per-stage processed / skipped / failed counts
 make spotcheck      # compare 20 parsed docs against raw maildir files
 ```
 
+The 100k subset (configured via `DEV_SUBSET_SIZE=100000`) ingests 100k parsed
+messages into ~52,219 unique documents after deduplication (47.8% duplicate rate
+across 31 mailboxes), producing a 307 MB primary index (615 MB with replicas).
+
 Stages can run individually: `uv run python -m ingest.cli parse --subset dev`.
 
 ---
@@ -276,6 +282,15 @@ against regressions.
 - **NDCG@10** — normalized discounted cumulative gain
 - **MRR** — mean reciprocal rank of first relevant hit
 - **Recall@50** — proportion of known relevant docs in top 50
+
+### Results (52,219 documents, 38 judged queries)
+
+| Method | NDCG@10 | MRR | Recall@50 |
+|---|---|---|---|
+| BM25 | 0.909 | 0.974 | 0.659 |
+| Vector | 0.637 | 0.747 | 0.500 |
+| **Hybrid** | **0.899** | **0.956** | **0.829** |
+| Hybrid + Rerank | 0.887 | 0.961 | 0.829 |
 
 ### Commands
 
@@ -585,6 +600,7 @@ every pull request:
 | **Reranker off by default** | Hybrid without rerank scored higher NDCG@10 and saves 94–188 ms latency |
 | **Subject boost ^1** | Empirical sweep proved `subject^1` yields +0.021 NDCG@10 and +0.060 MRR vs `subject^3` |
 | **ML in worker threads** | `asyncio.to_thread` for embedding and reranking — drops concurrency-4 p50 from 89 ms to 74 ms |
+| **Multi-node ES client** | `ES_HOST` is comma-separated; the client round-robins and retries on another node when one dies — required for 0-failure chaos gate |
 | **Server-side API proxy** | Frontend routes through Next.js `/api/proxy/[...path]` so ES credentials never appear in client bundles |
 
 See [`DECISIONS.md`](DECISIONS.md) for the complete decision log with measurements and alternatives considered.

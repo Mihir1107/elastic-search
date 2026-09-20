@@ -1,7 +1,7 @@
 """Local cross-encoder reranking.
 
 Runs in this process, never through Elasticsearch's ``text_similarity_reranker``
-retriever, which the prototype found returns 403 on a Basic licence (kickoff
+retriever, which the prototype found returns 403 on a Basic licence (spec
 flaw #5 and section 4). A cross-encoder scores the (query, document) pair
 jointly rather than comparing two independent embeddings, which is more accurate
 and much more expensive -- hence it only rescores the top of the fused list, and

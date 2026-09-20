@@ -67,6 +67,6 @@ unlabelled.
 
 ## Not claimed
 
-- This is **100,000 of 517,401 messages**. Kickoff criteria #1 and #8 say the full corpus; this
+- This is **100,000 of 517,401 messages**. Spec criteria #1 and #8 say the full corpus; this
   does not meet them as written (D27).
 - `recall@50` is comparative only; the pool is self-built (D22).

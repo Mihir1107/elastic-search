@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
-import { longDate, personName, shortDate } from "@/lib/format";
+import { cleanText, longDate, personName, shortDate } from "@/lib/format";
 import { Avatar } from "./Avatar";
 
 export function ReadingPane({
@@ -183,7 +183,7 @@ function Message({ doc }: { doc: EmailDoc | null }) {
         </time>
       </div>
 
-      <div className="prose-mail mt-5">{doc.body}</div>
+      <div className="prose-mail mt-5">{cleanText(doc.body)}</div>
 
       {doc.quoted_text && (
         <details className="mt-5 border-t border-[var(--color-rule)] pt-4">
@@ -287,7 +287,7 @@ function Thread({ thread, currentId }: { thread: ThreadResponse | null; currentI
                   current ? "" : "line-clamp-2 text-[var(--color-muted)]",
                 ].join(" ")}
               >
-                {m.body}
+                {cleanText(m.body)}
               </p>
             </li>
           );

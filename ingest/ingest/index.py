@@ -1,6 +1,6 @@
 """Stage 7: bulk into a versioned index, then flip the alias.
 
-Never deletes a live index (CLAUDE.md hard rule). Documents land in a concrete
+Never deletes a live index (CONTRIBUTING.md hard rule). Documents land in a concrete
 ``emails-vN``; the ``emails`` alias is re-pointed only after the document count
 and a smoke query both pass, and the swap is a single atomic
 ``update_aliases`` call so searchers never see a gap.

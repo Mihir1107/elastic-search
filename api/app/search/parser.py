@@ -1,7 +1,7 @@
 """Query understanding: turn one search box string into a structured query.
 
 This is the layer that replaces the prototype's "pick your query type" dropdown
-(kickoff flaw #2). The user types one string; this decides what it means.
+(spec flaw #2). The user types one string; this decides what it means.
 
 Supported syntax::
 
@@ -12,7 +12,7 @@ Supported syntax::
     to:x  cc:x  subject:x           further field operators
     before:2001-12-31 after:2001-07-01   date range
 
-Safety (kickoff flaw #13): user input is never placed into a ``wildcard``,
+Safety (spec flaw #13): user input is never placed into a ``wildcard``,
 ``regexp``, ``query_string`` or ``simple_query_string`` query, so ``*``/``?`` and
 regex metacharacters carry no special meaning anywhere downstream -- they are
 just characters that the analyzer discards. Input length and term count are

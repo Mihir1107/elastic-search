@@ -1,4 +1,7 @@
 # --- Python ---
+.coverage
+coverage.xml
+htmlcov/
 __pycache__/
 *.py[cod]
 .venv/
@@ -12,7 +15,7 @@ __pycache__/
 .env
 certs/
 
-# --- Data & models (never commit; see CLAUDE.md) ---
+# --- Data & models (never commit; see CONTRIBUTING.md) ---
 data/
 # Pooled candidates carry raw email bodies; regenerate with `make eval-pool`.
 eval/pools.json

@@ -20,7 +20,7 @@ from app.routes.deps import get_es, get_settings_from
 router = APIRouter(tags=["suggest"])
 
 #: A terms-aggregation ``include`` is a regular expression, so user input is
-#: reduced to a safe character class before it goes near one (kickoff flaw #13).
+#: reduced to a safe character class before it goes near one (spec flaw #13).
 _SAFE = re.compile(r"[^a-z0-9._@'-]")
 MAX_PREFIX = 64
 

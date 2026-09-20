@@ -4,7 +4,7 @@
  * Per-browser state: starred emails and recent searches.
  *
  * There are no user accounts in this build (an explicit non-goal in the
- * kickoff), so both live in localStorage. That means they are per-browser and
+ * spec), so both live in localStorage. That means they are per-browser and
  * never leave the machine. Every access is wrapped because storage throws in
  * private windows and can come back empty at any time.
  */

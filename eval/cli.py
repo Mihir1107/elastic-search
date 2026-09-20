@@ -225,7 +225,7 @@ def run(
     typer.echo(f"wrote {out}")
 
 
-REGRESSION_MARGIN = 0.02  # 2 NDCG points, per the kickoff
+REGRESSION_MARGIN = 0.02  # 2 NDCG points, per the spec
 
 
 @app.command()

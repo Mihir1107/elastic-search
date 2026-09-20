@@ -10,7 +10,8 @@ from typing import Any
 
 from ops.bench.runner import STAGES, BenchConfig, Summary
 
-#: The kickoff's gate (section 1, criterion 8): p95 under 300ms excluding rerank.
+#: The gate from docs/SPEC.md (section 2, criterion 8): p95 under 300ms
+#: excluding rerank.
 P95_TARGET_MS = 300.0
 
 

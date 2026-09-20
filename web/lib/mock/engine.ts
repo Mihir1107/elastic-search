@@ -1,7 +1,7 @@
 /**
  * In-browser stand-in for the Phase 2 search API.
  *
- * It deliberately mirrors the real pipeline's SHAPE (kickoff section 6): a BM25
+ * It deliberately mirrors the real pipeline's SHAPE (docs/SPEC.md section 5): a BM25
  * leg, a vector leg, manual RRF at k=60, highlighting, and facet aggregation,
  * each timed separately. The maths is toy — the point is that every field the
  * UI renders is a field the real API will return, so swapping in the backend
@@ -133,7 +133,7 @@ function bm25Leg(docs: MockDoc[], free: string[], phrases: string[]): Map<string
       const ql = q.toLowerCase();
       const sHits = subjectTerms.filter((t) => t === ql || t.startsWith(ql)).length;
       const bHits = bodyTerms.filter((t) => t === ql || t.startsWith(ql)).length;
-      // subject^3, per the kickoff's multi_match boost.
+      // subject^3, per the spec's multi_match boost.
       score += sHits * 3 + bHits;
 
       if (sHits === 0 && bHits === 0 && ql.length >= 5) {
@@ -224,7 +224,7 @@ function toHit(
   const bodyFrag = highlightFragment(`${doc.body} ${doc.quoted_text}`, free, phrases);
 
   // A hit the keyword leg never saw has nothing to highlight, so the UI shows
-  // the best chunk instead — the kickoff's rule for semantic-only hits.
+  // the best chunk instead — the spec's rule for semantic-only hits.
   const semantic =
     bm25Rank === null && vecRank !== null
       ? doc.body.split(/\n\n/)[0].slice(0, 240)
@@ -359,7 +359,7 @@ export function search(params: SearchParams): SearchResponse {
 
   const rerank = params.rerank ?? false;
   if (rerank && hasQuery) {
-    // The cross-encoder sees only the top 50, per the kickoff.
+    // The cross-encoder sees only the top 50, per the spec.
     const head = ordered.slice(0, 50);
     const byId = new Map(CORPUS.map((d) => [d.id, d]));
     head.sort((a, b) => {

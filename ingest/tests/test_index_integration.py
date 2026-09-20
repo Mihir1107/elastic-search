@@ -2,7 +2,7 @@
 
 Marked ``integration`` -- deselected by ``make test``, run by ``make test-integration``.
 Uses a throwaway index name and never touches the live ``emails`` alias or
-``emails-v1`` (CLAUDE.md: never delete a live index).
+``emails-v1`` (CONTRIBUTING.md: never delete a live index).
 """
 
 from __future__ import annotations

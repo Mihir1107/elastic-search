@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
-import { cleanText, longDate, personName, shortDate } from "@/lib/format";
+import { cleanText, longDate, personName, plural, shortDate } from "@/lib/format";
 import { Avatar } from "./Avatar";
 
 export function ReadingPane({
@@ -255,7 +255,7 @@ function Thread({ thread, currentId }: { thread: ThreadResponse | null; currentI
         {thread.subject}
       </h2>
       <p className="meta mt-1">
-        {thread.messages.length} messages, {shortDate(thread.messages[0].date)} to{" "}
+        {plural(thread.messages.length, "message")}, {shortDate(thread.messages[0].date)} to{" "}
         {shortDate(thread.messages[thread.messages.length - 1].date)}
       </p>
 

@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LayoutGroup } from "motion/react";
+import { LayoutGroup, MotionConfig } from "motion/react";
 import { Landing } from "@/components/Landing";
 import { Workspace } from "@/components/Workspace";
 import { Sidebar } from "@/components/Sidebar";
@@ -153,8 +153,13 @@ export default function Page() {
        deliberately no AnimatePresence here — an exiting Workspace never
        finishes leaving while its rows, reading pane and shared-layout pill are
        all still animating, which left both views on screen at once. */
-    <LayoutGroup>
-      <div className="flex min-h-dvh">
+    /* reducedMotion="user" makes every motion component honour the OS setting.
+       The CSS block in globals.css only reaches CSS transitions; without this,
+       shared-layout morphs and springs keep animating for someone who asked
+       the system for less motion. */
+    <MotionConfig reducedMotion="user">
+      <LayoutGroup>
+        <div className="flex min-h-dvh">
         {searching && (
           <Sidebar
             view={view}
@@ -225,8 +230,9 @@ export default function Page() {
           ) : (
             <CollectionsView />
           )}
+          </div>
         </div>
-      </div>
-    </LayoutGroup>
+      </LayoutGroup>
+    </MotionConfig>
   );
 }

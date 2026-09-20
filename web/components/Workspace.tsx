@@ -128,7 +128,20 @@ export function Workspace(p: Props) {
         <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
             <p className="meta">
-              {data ? `${plural(data.total, "result")} for` : "Searching"}
+              {/* The count crossfades instead of snapping, so a facet click
+                  reads as the same number changing rather than a new page. */}
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={data ? data.total : "searching"}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  className="inline-block"
+                >
+                  {data ? `${plural(data.total, "result")} for` : "Searching"}
+                </motion.span>
+              </AnimatePresence>
             </p>
             <h1 className="mt-0.5 font-serif text-[clamp(1.5rem,1.1rem+1.4vw,2.2rem)] leading-tight tracking-[-0.02em]">
               <span className="text-[var(--color-faint)]">&ldquo;</span>
@@ -180,13 +193,17 @@ export function Workspace(p: Props) {
                     />
                     {data.next_page_token && (
                       <div className="mt-4 flex justify-center">
-                        <button
+                        <motion.button
                           onClick={p.loadMore}
                           disabled={p.loadingMore}
-                          className="rounded-full border border-[var(--color-rule)] bg-[var(--color-surface)] px-5 py-2 text-[0.875rem] font-medium transition-colors hover:border-[var(--color-rule-strong)] disabled:opacity-60"
+                          whileHover={p.loadingMore ? undefined : { y: -1 }}
+                          whileTap={p.loadingMore ? undefined : { scale: 0.97 }}
+                          transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                          className="flex items-center gap-2 rounded-full border border-[var(--color-rule)] bg-[var(--color-surface)] px-5 py-2 text-[0.875rem] font-medium transition-colors hover:border-[var(--color-rule-strong)] disabled:opacity-60"
                         >
+                          {p.loadingMore && <Spinner />}
                           {p.loadingMore ? "Loading" : "Show more results"}
-                        </button>
+                        </motion.button>
                       </div>
                     )}
                   </>
@@ -350,5 +367,15 @@ function RerankToggle({
       />
       Rerank
     </button>
+  );
+}
+
+/** A one-element spinner. Sized to sit on a text baseline without shifting it. */
+function Spinner() {
+  return (
+    <span
+      className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-[var(--color-rule-strong)] border-t-[var(--color-ink)]"
+      aria-hidden
+    />
   );
 }

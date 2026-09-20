@@ -175,9 +175,13 @@ export function Insights({
   );
 }
 
+/** Sections settle in order rather than all at once, so the panel reads
+ *  top-down the way it is meant to be scanned. The stagger is CSS
+ *  (`nth-of-type` delays in globals.css) rather than a render-order counter,
+ *  which would be wrong the moment React renders this twice concurrently. */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mt-5 border-t border-[var(--color-rule)] pt-4 first-of-type:mt-4">
+    <section className="insight-section mt-5 border-t border-[var(--color-rule)] pt-4 first-of-type:mt-4">
       <h3 className="mb-2 text-[0.8125rem] font-semibold text-[var(--color-muted)]">
         {title}
       </h3>

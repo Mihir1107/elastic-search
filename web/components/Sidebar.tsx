@@ -18,7 +18,7 @@ const ITEMS: { id: View; label: string; icon: React.ReactNode; ready: boolean }[
   { id: "search", label: "Search", ready: true, icon: <IconSearch /> },
   { id: "saved", label: "Saved", ready: true, icon: <IconBookmark /> },
   { id: "history", label: "History", ready: true, icon: <IconClock /> },
-  { id: "collections", label: "Collections", ready: false, icon: <IconFolder /> },
+  { id: "collections", label: "Collections", ready: true, icon: <IconFolder /> },
 ];
 
 export function Sidebar({

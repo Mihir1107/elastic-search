@@ -74,7 +74,18 @@ function Row({
       }}
       className="result cursor-pointer px-4 py-3.5"
       data-active={active}
+      // A clickable row needs to be reachable and operable without a mouse.
+      role="button"
+      tabIndex={0}
+      aria-current={active ? "true" : undefined}
+      aria-label={`${hit.from_name || personName(hit.from)}: ${hit.subject}`}
       onClick={() => onOpen(hit)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(hit);
+        }
+      }}
     >
       <div className="flex gap-3">
         <Avatar address={hit.from} name={hit.from_name} />

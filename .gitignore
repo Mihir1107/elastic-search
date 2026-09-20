@@ -42,5 +42,6 @@ web/.env.local
 .env*.local
 .playwright-mcp/
 *.jpeg
+!docs/images/*.jpeg
 tsconfig.tsbuildinfo
 web/tsconfig.tsbuildinfo

@@ -7,7 +7,7 @@ operators (`from:`, `to:`, `cc:`, `subject:`, `before:`, `after:`), typo
 tolerance, and semantic matching — the system decides how to query; the user
 never picks "fuzzy" vs "prefix".
 
-![Landing Page](landing-real.jpeg)
+![Landing Page](docs/images/landing-real.jpeg)
 
 ---
 
@@ -221,7 +221,7 @@ A Next.js 15 + React 19 + Tailwind v4 investigation interface with an archival
 editorial aesthetic — warm parchment tones, editorial serif typography, lamp-lit
 dark mode.
 
-![Search Results](wired-results-real.jpeg)
+![Search Results](docs/images/wired-results-real.jpeg)
 
 ### Key UI Features
 
@@ -234,7 +234,7 @@ dark mode.
 - **Reading Pane**: Full message view with metadata, formatted body, collapsible quoted text, thread timeline
 - **Thread Reconstruction**: Vertical timeline spine showing the complete conversation chain
 
-![Reading Pane](reading-pane.jpeg)
+![Reading Pane](docs/images/reading-pane.jpeg)
 
 - **Latency Diagnostics**: Badge showing total response time; click for per-stage breakdown popover
 - **Cluster Health Badge**: Real-time status (green/yellow/red), node count, doc count
@@ -243,7 +243,7 @@ dark mode.
 - **Keyboard Shortcuts**: `⌘K` / `Ctrl+K` focuses search from anywhere
 - **Server Proxy**: `/api/proxy/[...path]` routes to FastAPI — no backend URLs or auth in client bundles
 
-![Facet Filtering](facet-filtered.jpeg)
+![Facet Filtering](docs/images/facet-filtered.jpeg)
 
 ---
 

@@ -99,6 +99,28 @@ window — the query declares an objective grading rule, so those judgments are 
 rather than a matter of opinion. Conceptual queries carry no rule and wait for a human.
 Unjudged queries are excluded from the means, never scored as zero.
 
+## Scale, HA and snapshots (Phase 6)
+
+```bash
+make bench                      # p50/p95/p99 against a running API, per stage
+make chaos                      # kill the node holding the most primaries, mid-load
+make snapshot                   # snapshot whatever `emails` currently resolves to
+make snapshots                  # list the repository
+make restore SNAP=<name>        # restore into a NEW index version; never over the live one
+```
+
+`make bench` fires the 50 evaluation queries at the HTTP API and reports client wall time
+alongside the API's own per-stage timings, so transport overhead is the visible gap between
+them. Failed requests are counted but excluded from the latency distribution.
+
+`make chaos` runs load, `docker kill`s a node, and reports the success rate, the
+green→yellow→green transitions, which replicas were promoted, and p50/p95 before, during and
+after. It targets the node holding the most primaries by default — killing a replica-only node
+passes the gate while demonstrating nothing. It requires `ES_HOST` to list every published
+node; with one host configured, killing it fails every request.
+
+Results land in `ops/results/` as both markdown and JSON.
+
 ## Repository layout
 
 ```

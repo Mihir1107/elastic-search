@@ -21,8 +21,12 @@ def test_password_comes_from_elastic_password(monkeypatch: pytest.MonkeyPatch) -
     assert s.es_password == "s3cret"
 
 
-def test_health_endpoint() -> None:
+def test_health_never_raises_without_a_lifespan() -> None:
+    """A bare client skips startup, so app.state is empty: report, do not 500."""
     client = TestClient(app)
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["api"] == "ok"
+    assert "elasticsearch" in (body["detail"] or "")

@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     bge_query_prefix: str = "Represent this sentence for searching relevant passages: "
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # Search behaviour.
+    default_page_size: int = 20
+    max_page_size: int = 50
+    #: How deep each retrieval leg goes before fusion. Manual RRF happens in the
+    #: API, so this bounds both cost and how far pagination can walk.
+    fusion_window: int = 200
+    knn_num_candidates: int = 200
+    #: Load the embedding model at startup so the first query is not slow.
+    warm_model: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

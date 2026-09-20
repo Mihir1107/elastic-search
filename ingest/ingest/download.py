@@ -166,7 +166,12 @@ def download(
 
     maildir = raw / _ROOT
     sentinel = raw / _SENTINEL
-    expected_marker = f"{digest}:{subset}"
+    # The marker records the subset *and its size*. A dev run with a larger
+    # DEV_SUBSET_SIZE needs more mailboxes on disk, and with only the subset name
+    # in the marker that re-extraction is silently skipped -- leaving parse to
+    # select from the smaller mailbox set while reporting success.
+    scope = subset if subset == "full" else f"{subset}:{settings.dev_subset_size}"
+    expected_marker = f"{digest}:{scope}"
     if (
         sentinel.exists()
         and maildir.is_dir()

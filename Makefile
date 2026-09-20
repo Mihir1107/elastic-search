@@ -65,6 +65,9 @@ eval-baseline:  ## Measure and update the committed baseline
 eval-check:  ## Fail if hybrid NDCG@10 regressed >2 points vs the baseline
 	$(UV) run python -m eval.cli check
 
+bench:  ## Measure search latency against a running API (p50/p95/p99)
+	$(UV) run python -m ops.bench.cli run
+
 lint:  ## ruff check
 	$(UV) run ruff check .
 
@@ -75,7 +78,7 @@ format-check:  ## ruff format (check only)
 	$(UV) run ruff format --check .
 
 typecheck:  ## mypy
-	$(UV) run mypy api/app ingest/ingest
+	$(UV) run mypy api/app ingest/ingest ops
 
 test:  ## Fast unit tests (no ES)
 	$(UV) run pytest -m "not integration"
@@ -98,4 +101,4 @@ web-build:  ## Production build of the frontend
 web-check:  ## Typecheck the frontend
 	cd web && npm run typecheck
 
-.PHONY: help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all
+.PHONY: bench help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all

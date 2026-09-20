@@ -48,3 +48,50 @@ def test_extraction_is_a_superset_of_what_parse_selects(tmp_path: Path) -> None:
     assert len(selected) == target
     used = {p.relative_to(maildir).parts[0] for p in selected}
     assert used <= wanted, "parse selected a mailbox that was never extracted"
+
+
+def _fake_archive(path: Path, mailboxes: dict[str, int]) -> None:
+    """A miniature maildir tarball, shaped like the real CMU release."""
+    import io
+    import tarfile
+
+    with tarfile.open(path, "w:gz") as tar:
+        for mailbox, count in mailboxes.items():
+            for i in range(count):
+                payload = b"From: a@enron.com\n\nbody\n"
+                info = tarfile.TarInfo(f"maildir/{mailbox}/inbox/{i}.")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+
+
+def test_growing_the_dev_subset_re_extracts(tmp_path: Path) -> None:
+    """Regression: the marker must carry the subset SIZE, not just its name.
+
+    With only the name in it, raising DEV_SUBSET_SIZE matched the existing marker,
+    extraction was skipped, and parse silently selected from the smaller mailbox
+    set while every stats file still reported success.
+    """
+    from ingest.config import IngestSettings
+    from ingest.download import download
+
+    mailboxes = {f"user-{i}": 40 for i in range(12)}
+    raw = tmp_path / "raw"
+    raw.mkdir(parents=True)
+    _fake_archive(raw / "enron.tar.gz", mailboxes)
+
+    def settings_for(target: int) -> IngestSettings:
+        return IngestSettings(
+            data_dir=tmp_path,
+            dev_subset_size=target,
+            enron_url="https://example.invalid/enron.tar.gz",
+            enron_sha256="",
+        )
+
+    download(settings_for(80), subset="dev")
+    small = {p.name for p in (raw / "maildir").iterdir()}
+
+    download(settings_for(400), subset="dev")
+    large = {p.name for p in (raw / "maildir").iterdir()}
+
+    assert len(small) == 2
+    assert small < large, "raising the target must extract more mailboxes"

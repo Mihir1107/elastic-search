@@ -17,6 +17,9 @@ async def search(
     q: str = Query("", description='Free text, "phrases", from:/to:/cc:/subject:, before:/after:'),
     size: int | None = Query(None, ge=1, le=200),
     page_token: str | None = Query(None, description="Opaque token from next_page_token"),
+    rerank: bool | None = Query(
+        None, description="Rerank the top results with a local cross-encoder"
+    ),
 ) -> SearchResponse:
     return await run_search(
         get_es(request),
@@ -24,4 +27,5 @@ async def search(
         q=q,
         size=size,
         page_token=page_token,
+        rerank=rerank,
     )

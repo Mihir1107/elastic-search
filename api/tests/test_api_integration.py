@@ -191,3 +191,20 @@ def test_suggest_sanitises_regex_input(client: TestClient) -> None:
     """A terms-agg include is a regex; metacharacters must not reach it."""
     response = client.get("/suggest", params={"prefix": ".*|(a)"})
     assert response.status_code == 200
+
+
+def test_rerank_flag_is_reported_separately(client: TestClient) -> None:
+    """Rerank latency must be its own number, never hidden inside total_ms."""
+    off = client.get("/search", params={"q": "transmission congestion", "rerank": "false"}).json()
+    on = client.get("/search", params={"q": "transmission congestion", "rerank": "true"}).json()
+    assert off["timings"]["rerank_ms"] == 0.0
+    assert on["timings"]["rerank_ms"] > 0.0
+
+
+def test_rerank_is_skipped_when_the_user_gave_an_explicit_signal(
+    client: TestClient,
+) -> None:
+    """A quoted phrase or a field operator is an explicit precision signal."""
+    for q in ['"natural gas"', "from:john.arnold@enron.com gas"]:
+        body = client.get("/search", params={"q": q, "rerank": "true"}).json()
+        assert body["timings"]["rerank_ms"] == 0.0, f"{q} should not be reranked"

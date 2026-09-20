@@ -264,5 +264,63 @@ def check() -> None:
     typer.secho("ok", fg=typer.colors.GREEN)
 
 
+#: Field-boost configurations to sweep. The first entry is the current default.
+FIELD_SWEEP: list[tuple[str, list[str]]] = [
+    ("default subject^3", ["subject^3", "body", "from.text", "to.text"]),
+    ("subject^1 (no boost)", ["subject", "body", "from.text", "to.text"]),
+    ("subject^2", ["subject^2", "body", "from.text", "to.text"]),
+    ("subject^5", ["subject^5", "body", "from.text", "to.text"]),
+    ("subject^3 people^2", ["subject^3", "body", "from.text^2", "to.text^2"]),
+    ("subject^3 body^2", ["subject^3", "body^2", "from.text", "to.text"]),
+    ("no people fields", ["subject^3", "body"]),
+]
+
+
+@app.command()
+def tune(
+    method: str = typer.Option("hybrid", help="Which method to tune against"),
+) -> None:
+    """Sweep BM25 field boosts and report the NDCG@10 delta for each.
+
+    Every tuning change in Phase 4 has to be justified by a number; this is how
+    that number gets produced.
+    """
+    queries = harness.load_queries(QUERIES)
+    qrels = judge.load_qrels(QRELS)
+    settings = get_settings()
+    original = list(settings.bm25_fields)
+
+    async def measure(fields: list[str]) -> dict[str, float]:
+        settings.bm25_fields = fields
+        es = make_client(settings)
+        try:
+            runs = await harness.run_all(es, settings, queries, methods=(method,))
+        finally:
+            await es.close()
+        return evaluate_run(runs[method], qrels)
+
+    rows: list[tuple[str, dict[str, float]]] = []
+    try:
+        for label_text, fields in FIELD_SWEEP:
+            rows.append((label_text, asyncio.run(measure(fields))))
+    finally:
+        settings.bm25_fields = original
+
+    base = rows[0][1]["ndcg@10"]
+    typer.echo("")
+    typer.echo(f"field-boost sweep on '{method}'")
+    typer.echo("")
+    header = f"  {'configuration':<22} {'ndcg@10':>9} {'delta':>9} {'mrr':>8}"
+    typer.echo(header)
+    for label_text, metrics in rows:
+        delta = metrics["ndcg@10"] - base
+        mark = "  <- current" if label_text.startswith("default") else ""
+        line = (
+            f"  {label_text:<22} {metrics['ndcg@10']:>9.4f} "
+            f"{delta:>+9.4f} {metrics['mrr']:>8.4f}{mark}"
+        )
+        typer.echo(line)
+
+
 if __name__ == "__main__":
     app()

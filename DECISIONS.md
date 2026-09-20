@@ -283,3 +283,54 @@ remains the only fusion path.
   systems already found, and hybrid (which fuses both legs) covers most of that union — hence
   recall near 1.0. It is a fair comparison *between* methods and meaningless as an absolute. The
   report says so in its own Caveats section rather than leaving the number to be misread.
+
+---
+
+# Phase 4 (Rerank + tuning)
+
+Every change below had to earn its place with a number, and two of them did not.
+
+## D23 — Reranking is gated to free-text queries
+- Ungated, the cross-encoder cost **-0.063 NDCG@10** (0.8565 -> 0.7932), wrecking person-topic
+  (-0.133) and exact-lookup (-0.071) while helping only typo'd queries (+0.014).
+- The pattern is principled, not noise: when the user supplies an explicit precision signal --
+  a quoted phrase, a `from:`/`to:`/date operator -- a semantic reranker should not be allowed to
+  overrule it. `rerank_free_text_only` skips reranking for those queries, and with that gate the
+  harm to every explicit-signal category disappears.
+
+## D24 — BM25 subject boost lowered from ^3 to ^1, contradicting the kickoff
+- The kickoff prescribes `subject^3`. Measured on the judged set the effect is monotone and the
+  prescription is simply too aggressive: `^5` -0.020, `^3` baseline, `^2` +0.017, `^1` +0.021
+  NDCG@10 (and `^1` is +0.060 MRR). `subject^1` dominates on both metrics, so it wins.
+- **Caveat, stated plainly:** the grading rules treat a match in the subject and a match in the
+  body as equally relevant, so they cannot reward subject boosting even where a human would.
+  This is worth re-validating once the conceptual queries are labelled. Boosts are config
+  (`bm25_fields`), so re-tuning is `make eval` plus a settings change, not a code change.
+- Boosting or removing `from.text`/`to.text` changed nothing (+0.0000) on this query set. They
+  are kept because they serve name search without a `from:` operator, which this set never tests.
+
+## D25 — Reranking ships off by default, because the numbers say so
+- After D24 fixed the boosts, hybrid improved so much that gated reranking became a net loss
+  again: **-0.037 NDCG@10** (0.8775 -> 0.8401) and **-0.051 MRR**. Fixing BM25 captured the gain
+  reranking had been providing.
+- It also costs 94-188ms per query, reported as its own `timings.rerank_ms` so it can never hide
+  inside the total.
+- So it is implemented, flagged per request (`?rerank=true`) and per config, and **off**. The
+  case it exists for -- conceptual queries -- is the one the judged set cannot yet measure, so
+  this decision should be revisited when those 12 queries are labelled.
+
+## D26 — `term_vector: with_positions_offsets` was tried and reverted
+- Hypothesis: storing offsets would stop the highlighter re-analysing bodies. Measured on a real
+  reindex it made highlighting **worse**: +24% at size 20 (348ms -> 432ms) and +31% at size 200.
+- Reverted. The rollback was an alias flip back to `emails-v1` with no reindex and no downtime,
+  which is exactly what the versioned-index design is for; the failed `emails-v2` was dropped
+  only after it was no longer the live index.
+
+## F8 — Highlighting is the search latency bottleneck (a Phase 6 lever)
+Per-stage p50 on the dev subset: parse 0.0ms, embed ~30ms, kNN ~24ms, fuse 0.3ms, BM25 ~170ms --
+and isolating the BM25 leg shows essentially all of it is highlighting: the same query costs
+**84ms without highlighting and 1885ms with it** at size 200, ~46ms vs ~394ms at size 20.
+Current p95 is ~570ms against the kickoff's 300ms target, so this is the thing to attack in
+Phase 6. Term vectors are not the answer (D26); the promising directions are highlighting only
+the page (which needs a cheaper second pass than the one measured here, since an extra round
+trip cost more than it saved) or a smaller `fragment_size`/field set validated by measurement.

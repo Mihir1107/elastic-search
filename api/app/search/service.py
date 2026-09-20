@@ -43,6 +43,7 @@ from app.search.builder import (
 from app.search.embedder import embed_query
 from app.search.fusion import FusedHit, fuse
 from app.search.parser import ParsedQuery, parse
+from app.search.rerank import rerank as rerank_hits
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ async def run_search(
     size: int | None = None,
     page_token: str | None = None,
     method: Literal["hybrid", "bm25", "vector"] = "hybrid",
+    rerank: bool | None = None,
 ) -> SearchResponse:
     """Run the search pipeline.
 
@@ -160,14 +162,14 @@ async def run_search(
     window = min(max(offset + page_size, page_size), settings.fusion_window)
 
     filters = build_filters(parsed)
-    bm25_query = build_bm25_query(parsed, filters)
+    bm25_query = build_bm25_query(parsed, filters, settings.bm25_fields)
 
     request: dict[str, Any] = {
         "query": bm25_query,
         "size": window,
         "_source": {"includes": _SOURCE_FIELDS},
-        "highlight": HIGHLIGHT,
         "aggs": facets_mod.build_aggs(),
+        "highlight": HIGHLIGHT,
         "track_total_hits": True,
     }
     tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
@@ -206,7 +208,22 @@ async def run_search(
     fused = fuse(legs)
     timings.fuse_ms = round((perf_counter() - t0) * 1000, 2)
 
+    # Reranking is a request flag over a config default, and its cost is reported
+    # separately so it can never hide inside total_ms (kickoff section 6).
+    use_rerank = settings.rerank_enabled if rerank is None else rerank
+    if use_rerank and settings.rerank_free_text_only and (parsed.phrases or parsed.has_filters):
+        # The user gave an explicit precision signal; do not let a semantic
+        # reranker talk us out of it.
+        use_rerank = False
+    if use_rerank and parsed.semantic_text and fused:
+        t0 = perf_counter()
+        fused = rerank_hits(
+            parsed.semantic_text, fused, settings.rerank_model, settings.rerank_window
+        )
+        timings.rerank_ms = round((perf_counter() - t0) * 1000, 2)
+
     page = fused[offset : offset + page_size]
+
     next_token = (
         encode_page_token(offset + page_size)
         if offset + page_size < len(fused) and offset + page_size < settings.fusion_window

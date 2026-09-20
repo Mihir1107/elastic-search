@@ -17,7 +17,10 @@ from elasticsearch import AsyncElasticsearch
 from app.config import Settings
 from app.search.service import run_search
 
-METHODS: tuple[str, ...] = ("bm25", "vector", "hybrid")
+METHODS: tuple[str, ...] = ("bm25", "vector", "hybrid", "hybrid+rerank")
+
+#: "<leg>+rerank" runs that leg then the local cross-encoder.
+RERANK_SUFFIX = "+rerank"
 RUN_DEPTH = 50  # enough for recall@50
 POOL_DEPTH = 20  # union of the top 20 of every method
 
@@ -35,12 +38,16 @@ async def run_method(
     method: str,
     size: int = RUN_DEPTH,
 ) -> list[str]:
+    leg, rerank = method, False
+    if method.endswith(RERANK_SUFFIX):
+        leg, rerank = method[: -len(RERANK_SUFFIX)], True
     response = await run_search(
         es,
         settings,
         q=query_text,
         size=size,
-        method=method,  # type: ignore[arg-type]
+        method=leg,  # type: ignore[arg-type]
+        rerank=rerank,
     )
     return [hit.id for hit in response.hits]
 

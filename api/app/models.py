@@ -20,6 +20,8 @@ class Timings(BaseModel):
     bm25_ms: float = 0.0
     knn_ms: float = 0.0
     fuse_ms: float = 0.0
+    highlight_ms: float = 0.0
+    rerank_ms: float = 0.0
     total_ms: float = 0.0
 
 

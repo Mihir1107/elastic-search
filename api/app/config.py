@@ -30,6 +30,22 @@ class Settings(BaseSettings):
     # BGE retrieval uses an instruction prefix on the QUERY side only.
     bge_query_prefix: str = "Represent this sentence for searching relevant passages: "
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    #: Reranking is off unless a request asks for it; this flips the default.
+    rerank_enabled: bool = False
+    #: Only rerank queries that are pure free text. When the user supplied an
+    #: explicit precision signal -- a quoted phrase or a from:/to:/date operator --
+    #: that intent should not be overridden by a semantic reranker. Measured:
+    #: see eval/results/ and DECISIONS D23.
+    rerank_free_text_only: bool = True
+    #: How many fused results the cross-encoder rescores (kickoff: top 50).
+    rerank_window: int = 50
+    #: BM25 field boosts, configurable so tuning sweeps need no code change.
+    #: Tuned in Phase 4. The kickoff prescribed subject^3; measured on the judged
+    #: set that is too aggressive, and the effect is monotone: ^5 -0.020,
+    #: ^3 baseline, ^2 +0.017, ^1 +0.021 NDCG@10 (and ^1 is +0.060 MRR). The
+    #: best-measured value wins rather than a theoretical preference for boosting
+    #: subject; see DECISIONS D24 for the caveat this carries.
+    bm25_fields: list[str] = ["subject", "body", "from.text", "to.text"]
 
     # Search behaviour.
     default_page_size: int = 20

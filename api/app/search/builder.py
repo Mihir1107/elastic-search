@@ -15,10 +15,16 @@ from app.search.parser import FUZZINESS, ParsedQuery, is_address
 #: subject is boosted; from/to .text let a name match without an address.
 BM25_FIELDS = ["subject^3", "body", "from.text", "to.text"]
 
+#: Cap how much of a body the highlighter re-analyses. Highlighting is by far the
+#: most expensive part of a search (measured: ~1.9s for 200 docs vs 45ms without),
+#: and fragments in practice come from the first part of an email anyway.
+MAX_ANALYZED_OFFSET = 100_000
+
 HIGHLIGHT: dict[str, Any] = {
     "pre_tags": ["<mark>"],
     "post_tags": ["</mark>"],
     "encoder": "html",
+    "max_analyzed_offset": MAX_ANALYZED_OFFSET,
     "fields": {
         "subject": {"number_of_fragments": 0},
         "subject.exact": {"number_of_fragments": 0},
@@ -26,6 +32,7 @@ HIGHLIGHT: dict[str, Any] = {
         "body.exact": {"fragment_size": 160, "number_of_fragments": 2},
     },
 }
+
 
 #: Order of preference when several highlighted fields matched.
 _HIGHLIGHT_PREFERENCE = ("body.exact", "body", "subject.exact", "subject")
@@ -65,7 +72,11 @@ def build_filters(query: ParsedQuery) -> list[dict[str, Any]]:
     return filters
 
 
-def build_bm25_query(query: ParsedQuery, filters: list[dict[str, Any]]) -> dict[str, Any]:
+def build_bm25_query(
+    query: ParsedQuery,
+    filters: list[dict[str, Any]],
+    fields: list[str] | None = None,
+) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
 
     if query.terms:
@@ -73,7 +84,7 @@ def build_bm25_query(query: ParsedQuery, filters: list[dict[str, Any]]) -> dict[
             {
                 "multi_match": {
                     "query": query.text,
-                    "fields": BM25_FIELDS,
+                    "fields": fields or BM25_FIELDS,
                     "type": "best_fields",
                     # AUTO:5,8 -> exact below 5 chars, then 1 then 2 edits.
                     "fuzziness": FUZZINESS,

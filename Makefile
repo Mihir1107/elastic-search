@@ -71,6 +71,16 @@ bench:  ## Measure search latency against a running API (p50/p95/p99)
 chaos:  ## Kill a node under live load and report the success rate
 	$(UV) run python -m ops.chaos.cli run
 
+snapshot:  ## Snapshot the index behind the `emails` alias
+	$(UV) run python -m ops.snapshots.cli snapshot
+
+snapshots:  ## List snapshots in the repository
+	$(UV) run python -m ops.snapshots.cli list
+
+restore:  ## Restore SNAP=<name> into a NEW index version (never over the live one)
+	@test -n "$(SNAP)" || { echo "usage: make restore SNAP=<snapshot-name>"; exit 2; }
+	$(UV) run python -m ops.snapshots.cli restore $(SNAP)
+
 lint:  ## ruff check
 	$(UV) run ruff check .
 
@@ -104,4 +114,4 @@ web-build:  ## Production build of the frontend
 web-check:  ## Typecheck the frontend
 	cd web && npm run typecheck
 
-.PHONY: bench chaos help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all
+.PHONY: bench chaos snapshot snapshots restore help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all

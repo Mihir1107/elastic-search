@@ -16,12 +16,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class IngestSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Elasticsearch.
+    # Elasticsearch. ``es_host`` is comma-separated: the same setting the API
+    # reads, so a bulk load survives a node going away mid-ingest instead of
+    # failing on the one host it was given. See api/app/config.py.
     es_host: str = "https://localhost:9200"
     es_username: str = "elastic"
     es_password: str = Field(default="", validation_alias="ELASTIC_PASSWORD")
     es_ca_cert: str = "./certs/ca.crt"
     es_timeout: float = 60.0
+
+    @property
+    def es_hosts(self) -> list[str]:
+        """``es_host`` split into the list the client is constructed with."""
+        return [host.strip() for host in self.es_host.split(",") if host.strip()]
 
     # Index / alias (write to a concrete version, flip the alias last).
     emails_alias: str = "emails"

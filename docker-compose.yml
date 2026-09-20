@@ -21,6 +21,9 @@ services:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
+      # Mounted only so this root container can hand the snapshot repository to
+      # the elasticsearch user; the nodes mount it to read and write snapshots.
+      - snapshots:/snapshots
     user: "0"
     command: >
       bash -c '
@@ -29,6 +32,14 @@ services:
         elif [ x${KIBANA_PASSWORD} == x ]; then
           echo "Set KIBANA_PASSWORD in the .env file"; exit 1;
         fi;
+        # A named volume is created root-owned, but Elasticsearch runs as uid
+        # 1000 (gid 0) and must write shard data into path.repo. Without this,
+        # registering the repository fails with repository_verification_exception
+        # "failed to create blob container". Done before the certs so the
+        # healthcheck (which waits on es01.crt) cannot pass ahead of it.
+        echo "Preparing the snapshot repository";
+        chown -R 1000:0 /snapshots;
+        chmod -R g+rwX /snapshots;
         if [ ! -f config/certs/ca.zip ]; then
           echo "Creating CA";
           bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;

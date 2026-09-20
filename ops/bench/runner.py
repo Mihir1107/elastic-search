@@ -38,6 +38,9 @@ class Sample:
     timings: dict[str, float]
     hits: int
     error: str | None = None
+    #: ``time.monotonic()`` when the request was issued. The chaos run buckets
+    #: samples into before / during / after a node kill by this.
+    at: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -109,21 +112,22 @@ async def _one(client: httpx.AsyncClient, cfg: BenchConfig, query: str) -> Sampl
     if cfg.rerank:
         params["rerank"] = "true"
 
+    at = time.monotonic()
     started = time.perf_counter()
     try:
         response = await client.get("/search", params=params)
     except (TimeoutError, httpx.HTTPError) as exc:
         wall = (time.perf_counter() - started) * 1000
-        return Sample(query, 0, wall, {}, 0, error=type(exc).__name__)
+        return Sample(query, 0, wall, {}, 0, error=type(exc).__name__, at=at)
 
     wall = (time.perf_counter() - started) * 1000
     if response.status_code != 200:
         status = response.status_code
-        return Sample(query, status, wall, {}, 0, error=f"http-{status}")
+        return Sample(query, status, wall, {}, 0, error=f"http-{status}", at=at)
 
     body = response.json()
     timings = {k: float(v) for k, v in (body.get("timings") or {}).items()}
-    return Sample(query, 200, wall, timings, len(body.get("results") or []))
+    return Sample(query, 200, wall, timings, len(body.get("results") or []), at=at)
 
 
 async def run_bench(
@@ -157,7 +161,14 @@ async def run_bench(
                 try:
                     query = work.get_nowait()
                 except asyncio.QueueEmpty:
-                    return
+                    if stop is None:
+                        return
+                    # The chaos run holds load open for a wall-clock window, so
+                    # exhausting the query set means loop it, not stop early.
+                    for _ in range(cfg.iterations):
+                        for q in queries:
+                            work.put_nowait(q)
+                    continue
                 samples.append(await _one(client, cfg, query))
 
         await asyncio.gather(*(worker() for _ in range(cfg.concurrency)))

@@ -30,3 +30,27 @@ def test_health_never_raises_without_a_lifespan() -> None:
     assert body["status"] == "degraded"
     assert body["api"] == "ok"
     assert "elasticsearch" in (body["detail"] or "")
+
+
+def test_es_hosts_splits_a_comma_separated_list() -> None:
+    """The HA gate needs every node in the client, not just the first: killing
+    the one node the client knows about would fail every request."""
+    s = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        es_host="https://localhost:9200, https://localhost:9201,https://localhost:9202",
+    )
+    assert s.es_hosts == [
+        "https://localhost:9200",
+        "https://localhost:9201",
+        "https://localhost:9202",
+    ]
+
+
+def test_es_hosts_is_a_single_element_list_for_one_host() -> None:
+    s = Settings(_env_file=None, es_host="https://localhost:9200")  # type: ignore[call-arg]
+    assert s.es_hosts == ["https://localhost:9200"]
+
+
+def test_es_hosts_drops_empty_entries() -> None:
+    s = Settings(_env_file=None, es_host="https://a:9200,,  ,https://b:9200")  # type: ignore[call-arg]
+    assert s.es_hosts == ["https://a:9200", "https://b:9200"]

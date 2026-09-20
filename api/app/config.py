@@ -16,12 +16,21 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Elasticsearch connection (TLS + basic auth; see docker-compose.yml).
+    # Comma-separated: the client must hold every node it can reach, or killing
+    # the one node it knows about fails every request (Phase 6's HA gate). The
+    # client round-robins and retries a request on another node when one dies.
+    # Ref: elastic.co/docs/reference/elasticsearch/clients/python/connecting
     es_host: str = "https://localhost:9200"
     es_username: str = "elastic"
     # Single source of truth for the superuser password is ELASTIC_PASSWORD.
     es_password: str = Field(default="", validation_alias="ELASTIC_PASSWORD")
     es_ca_cert: str = "./certs/ca.crt"
     es_timeout: float = 30.0
+
+    @property
+    def es_hosts(self) -> list[str]:
+        """``es_host`` split into the list the client is constructed with."""
+        return [host.strip() for host in self.es_host.split(",") if host.strip()]
 
     # Index / models.
     emails_alias: str = "emails"

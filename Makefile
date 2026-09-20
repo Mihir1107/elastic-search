@@ -68,6 +68,9 @@ eval-check:  ## Fail if hybrid NDCG@10 regressed >2 points vs the baseline
 bench:  ## Measure search latency against a running API (p50/p95/p99)
 	$(UV) run python -m ops.bench.cli run
 
+chaos:  ## Kill a node under live load and report the success rate
+	$(UV) run python -m ops.chaos.cli run
+
 lint:  ## ruff check
 	$(UV) run ruff check .
 
@@ -101,4 +104,4 @@ web-build:  ## Production build of the frontend
 web-check:  ## Typecheck the frontend
 	cd web && npm run typecheck
 
-.PHONY: bench help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all
+.PHONY: bench chaos help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all

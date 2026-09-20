@@ -338,3 +338,61 @@ Current p95 is ~570ms against the kickoff's 300ms target, so this is the thing t
 Phase 6. Term vectors are not the answer (D26); the promising directions are highlighting only
 the page (which needs a cheaper second pass than the one measured here, since an extra round
 trip cost more than it saved) or a smaller `fragment_size`/field set validated by measurement.
+
+---
+
+# Phase 6 (Scale + HA)
+
+## D27 — Corpus scope is 100k messages, not the full 517k, and that is a stated shortfall
+- **Kickoff criteria #1 and #8 say "the full corpus"; this does not meet them.** Recorded as a
+  deliberate choice rather than a redefinition.
+- **Measured, not estimated:** `emails-v1` holds 7,355 emails in **42.6 MB of primaries /
+  85.1 MB with the replica** (19,104 Lucene docs = 7,355 parents + 11,749 nested chunks). So the
+  index is *not* the expensive part: the full corpus would be ~4.4 GB with a replica, comfortably
+  inside the 29 GiB free. The earlier disk objection to a full ingest was wrong and is withdrawn.
+- What still argues against full: **~5–7 hours** of wall time (embedding 7,355 docs takes ~4
+  minutes, so 517k is ~3.5 h before the other stages), and **dedupe holds every message in
+  memory** (D12) — 517k records against a 7.75 GiB Docker VM on a 16 GB laptop.
+- 100k costs ~40 minutes and ~3 GB peak, and `DEV_SUBSET_SIZE` already parameterises it, so it is
+  the same code path over a deterministic *superset* of the existing 5 mailboxes.
+- **Why this is defensible for the latency gate:** highlighting cost scales with `fusion_window`
+  (200 docs fetched per query), not with corpus size. Only the BM25 term lookup and the HNSW walk
+  grow with N, the latter ~log N. Corpus size changes how honest the claim is, not what the fix is.
+
+## F9 — The HA design was never exercisable: only es01 had the bootstrap password
+The `elastic` user is served by the **reserved** realm, which reads its password per-node from the
+`ELASTIC_PASSWORD` environment variable. Compose set it on es01 only (as Elastic's official example
+does), so es02 and es03 answered **401** to the same credentials es01 accepted — verified directly
+against ports 9201/9202, and in es02's log: `Authentication of [elastic] was terminated by realm
+[reserved]`. A client holding all three nodes would have failed two thirds of its requests, and the
+chaos gate could not have been met at all. Fixed by passing `ELASTIC_PASSWORD` to every node.
+
+## D28 — `ES_HOST` is a comma-separated list, and the API client holds every node
+- **Alternatives:** sniffing (`sniff_on_start`); a load balancer in front of the cluster.
+- **Reason:** the client was constructed with `hosts=[settings.es_host]` — one node. Killing that
+  node fails every request no matter how healthy the cluster is, so zero-failure HA was
+  unreachable by construction. The client now round-robins across all three published ports and
+  retries elsewhere when one stops answering. Sniffing was rejected because the nodes advertise
+  their container names (`es01:9200`), which do not resolve from the host.
+
+## D29 — The chaos run kills the node holding the most primaries, not a fixed one
+- First run killed `es02`, which happened to hold **only replicas**. 0 failed requests, green →
+  yellow → green — and **no promotion at all**, because nothing needed promoting. It passed the
+  letter of the gate while demonstrating almost none of it.
+- `--container auto` now resolves the node with the most started primaries and kills that. On the
+  dev subset that is `es01`, which is also the elected master, so the run exercises master
+  re-election as well. Promotion is then evidenced by comparing shard tables: a shard counts as
+  promoted only when the node now serving its primary was serving a *replica* before the kill —
+  comparing shard ids alone reports every shard as promoted, which a unit test caught.
+
+## F10 — Latency is already at the gate on the dev subset
+`ops/bench` over the 50 evaluation queries at concurrency 4 on `emails-v1` (7,355 docs):
+**wall p50 125.8 ms, p95 301.4 ms, p99 617.0 ms**, with `bm25_ms` p95 = 234.0 ms the dominant
+stage. That is the 300 ms target reached with 7,355 documents, before the corpus grows — F8's
+highlighting cost, confirmed with the new instrument.
+
+## F11 — A node loss made search *faster*, not slower
+During the outage p50 fell from 130.5 ms to 82.7 ms and p95 from 298.2 ms to 176.1 ms. With one
+node gone the coordinating node holds more of the shards it needs locally, so the fan-out costs
+less network. Worth stating explicitly because "latency improved during the chaos phase" reads
+like an instrumentation bug and is not one.

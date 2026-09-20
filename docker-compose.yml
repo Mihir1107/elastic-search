@@ -147,6 +147,12 @@ services:
       - cluster.name=${CLUSTER_NAME}
       - cluster.initial_master_nodes=es01,es02,es03
       - discovery.seed_hosts=es01,es03
+      # Every node needs the bootstrap password: the `elastic` user is served by
+      # the RESERVED realm, which reads it per-node from this variable. Without it
+      # es02/es03 answer 401 to the credentials es01 accepts, so a client holding
+      # all three nodes fails two thirds of its requests -- and the HA demo cannot
+      # work at all. Ref: elastic.co/docs/deploy-manage/users-roles/cluster-or-deployment-auth/built-in-users
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - bootstrap.memory_lock=true
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=true
@@ -190,6 +196,12 @@ services:
       - cluster.name=${CLUSTER_NAME}
       - cluster.initial_master_nodes=es01,es02,es03
       - discovery.seed_hosts=es01,es02
+      # Every node needs the bootstrap password: the `elastic` user is served by
+      # the RESERVED realm, which reads it per-node from this variable. Without it
+      # es02/es03 answer 401 to the credentials es01 accepts, so a client holding
+      # all three nodes fails two thirds of its requests -- and the HA demo cannot
+      # work at all. Ref: elastic.co/docs/deploy-manage/users-roles/cluster-or-deployment-auth/built-in-users
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - bootstrap.memory_lock=true
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=true

@@ -6,41 +6,51 @@ mailboxes (307.4 MB primaries / 614.8 MB with the replica). Cluster: 3 nodes, Ba
 
 ## Gate 1 — p95 search latency under 300 ms, excluding reranking
 
-**Met.** Four runs of 300 requests at concurrency 4 over the 50 evaluation queries:
+**Met.** Three runs of 300 requests at concurrency 4 over the 50 evaluation
+queries, measured against a production-mode server with exactly one listener on
+the port (verified with `lsof`):
 
 | run | p50 | p95 | p99 |
 |---|---:|---:|---:|
-| gate-100k    | 119.5 ms | 273.6 ms | 330.2 ms |
-| gate-100k-r1 |  93.3 ms | 218.9 ms | 566.8 ms |
-| gate-100k-r2 |  83.7 ms | 190.3 ms | 225.2 ms |
-| gate-100k-r3 |  78.5 ms | 175.5 ms | 202.0 ms |
+| gate-final-r1 | 115.5 ms | 207.8 ms | 264.8 ms |
+| gate-final-r2 |  96.1 ms | 189.3 ms | 228.6 ms |
+| gate-final-r3 | 100.6 ms | 194.9 ms | 216.3 ms |
 
-Every run is under the target; the **worst observed p95 is 273.6 ms**, so the margin on a loaded
-laptop is about 10%, not the 45% the best run implies. Quoted honestly: p95 sits in the
-175–275 ms band at concurrency 4, and p99 is *not* under 300 ms in every run.
+**Worst observed p95 is 207.8 ms**, roughly 30% inside the target, and p99 is
+under 300 ms in every run.
 
-Scaling by concurrency (single clean run, production-mode server, one listener):
+These numbers are *after* the pagination fix (D32), which is why they differ
+from the ones taken earlier in the phase. That fix made the fusion window a
+constant — correct, but it put highlighting on the critical path for 120
+documents instead of 20 and pushed p95 to 907 ms. Moving highlighting to a
+second query over only the returned page brought it back:
 
-| concurrency | p50 | p95 | p99 |
-|---|---:|---:|---:|
-| 1 | 50.9 ms | 133.5 ms | 178.1 ms |
-| 4 | 74.8 ms | 157.8 ms | 173.3 ms |
-| 8 | 139.3 ms | 254.6 ms | 303.7 ms |
+| configuration | p95 @ c=4 | pagination |
+|---|---:|---|
+| variable window, highlight everything | 157.8 ms | **repeats results** |
+| constant window 200, highlight everything | 907.3 ms | correct |
+| constant window 120, highlight the page only | **~200 ms** | correct |
 
-Latency is governed by concurrency, not corpus size: the same measurement on the 7,355-document
-index gave p95 154.7 ms at concurrency 4 against 157.8 ms here, a 7x larger corpus (F16).
+Scaling by concurrency, measured before the fix but still the shape of it:
+latency is governed by concurrency, not corpus size. The same benchmark on the
+7,355-document index gave p95 154.7 ms against 157.8 ms on 52,219 documents — a
+7x larger corpus for a 2% difference (F16).
 
 ## Gate 2 — a chaos run with zero failed requests
 
-**Met.** `ops/results/chaos-100k.md`. Killed `es03` — chosen automatically as the node holding
-the most primaries — with `docker kill` under live load.
+**Met.** `ops/results/chaos-final.md`. Killed `es03` — chosen automatically as
+the node holding the most primaries — with `docker kill` under live load.
 
-- **3,654 requests, 0 failed (100.00%).**
-- Health: green → **yellow at +1.4 s** → green **27 s after restart**.
-- Replica promotion: `emails-v2/2` (plus `emails-v1/1` and `emails-v1/2`) had their primaries
-  move onto nodes that were serving replicas before the kill.
-- p95 by phase: **156.2 ms before, 172.9 ms during, 337.4 ms after**. The outage is cheap; shard
-  recovery is what costs latency (F17).
+- **2,802 requests, 0 failed (100.00%).**
+- Health: green -> **yellow at +0.8 s** -> green **27.5 s after restart**.
+- Replica promotion: `emails-v2/2` (plus `emails-v1/1` and `emails-v1/2`) had
+  their primaries move onto nodes that were serving replicas before the kill.
+- p95 by phase: **197.8 ms before, 203.1 ms during, 364.4 ms after**. The
+  outage itself is nearly free; shard recovery is what costs latency (F17).
+
+This only works because `ES_HOST` lists all three published nodes. With one
+host configured the client has nowhere to retry, and killing that node fails
+every request regardless of cluster health (D28).
 
 ## Gate 3 — snapshots, restoring into a new index version
 
@@ -56,11 +66,13 @@ Re-pooled and re-baselined for the new corpus (required — see F14):
 | method | NDCG@10 | MRR | Recall@50 |
 |---|---:|---:|---:|
 | bm25 | **0.9087** | 0.9737 | 0.6592 |
-| vector | 0.6369 | 0.7474 | 0.4999 |
-| hybrid | 0.8992 | 0.9560 | 0.8287 |
-| hybrid+rerank | 0.8873 | 0.9613 | 0.8287 |
+| vector | 0.6415 | 0.7474 | 0.5022 |
+| hybrid | 0.9079 | 0.9569 | 0.7910 |
+| hybrid+rerank | 0.8982 | 0.9613 | 0.7910 |
 
-BM25 leads hybrid by 0.0095 on this query set. See F15 before drawing a conclusion from that:
+Hybrid improved from 0.8992 to 0.9079 as a side effect of D32: a constant,
+wider fusion window fuses a better candidate set. BM25 now leads hybrid by
+0.0008 on this query set. See F15 before drawing a conclusion from that:
 38 of the 50 queries are graded by phrase/sender/date rules, which is BM25's home ground, and
 the 12 conceptual queries — the ones that would test the vector leg and reranking — are still
 unlabelled.

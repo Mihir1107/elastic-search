@@ -47,8 +47,8 @@ a polished investigation UI:
 
 > **Status**: complete. The shipped index holds **52,219 unique emails** from
 > 100,000 parsed messages. All gates are met and their evidence is committed in
-> [`ops/results/`](ops/results/PHASE6.md): p95 **220.5 ms** against a 300 ms
-> target, a chaos run with **0 failed requests out of 3,654** while a node was
+> [`ops/results/`](ops/results/PHASE6.md): p95 **189–208 ms** against a 300 ms
+> target, a chaos run with **0 failed requests out of 2,802** while a node was
 > killed mid-load, and snapshot/restore into a new index version with the live
 > alias untouched.
 >
@@ -344,10 +344,9 @@ make bench          # fires 50 queries at configurable concurrency (1, 4, 8)
 ```
 
 Reports client wall-time percentiles (p50/p95/p99) alongside API per-stage
-timings. At concurrency 4 on 52,219 documents: **p95 = 220.5 ms** against a
-300 ms target. Measured across repeated runs the p95 sits in a **175–275 ms**
-band on a loaded laptop, so the margin is roughly 10–40% rather than the single
-best number — and p99 is not always under 300 ms. Latency tracks concurrency
+timings. At concurrency 4 on 52,219 documents, across three runs of 300
+requests: **p95 = 189–208 ms** against a 300 ms target, with p99 under 300 ms
+in every run. Latency tracks concurrency
 far more than corpus size: the same measurement on a 7,355-document index gave
 p95 154.7 ms (DECISIONS F16).
 
@@ -362,7 +361,7 @@ make chaos          # kill-under-load HA test
 3. Continues load for 40s during yellow state and replica promotion
 4. Restarts the killed node; waits for green recovery
 
-Result: **100% request success rate** (0 failures across 3,654 requests) —
+Result: **100% request success rate** (0 failures across 2,802 requests) —
 the FastAPI client round-robins across all 3 nodes and retries on connection loss.
 
 ### Snapshot & Restore

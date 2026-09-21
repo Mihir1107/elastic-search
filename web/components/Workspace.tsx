@@ -161,7 +161,20 @@ export function Workspace(p: Props) {
                 Clear {plural(p.filterCount, "filter")}
               </button>
             )}
-            <RerankToggle on={p.rerank} onChange={p.onRerank} />
+            <RerankToggle
+              on={p.rerank}
+              onChange={p.onRerank}
+              state={
+                !p.rerank
+                  ? "off"
+                  : p.loading || !data
+                    ? "pending"
+                    : data.reranked
+                      ? "applied"
+                      : "skipped"
+              }
+              skipReason={data?.warnings.find((w) => w.startsWith("reranking skipped"))}
+            />
             {data && <TimingNote timing={data.timing} />}
           </div>
         </div>
@@ -326,41 +339,65 @@ function Empty({
 
 export { count };
 
+type RerankState = "off" | "pending" | "applied" | "skipped";
+
 /**
  * Turns on the cross-encoder pass.
  *
- * It is a flag on /search rather than the default because it costs 100-200ms
- * and, measured against the judged query set, it trades top-10 ordering for a
- * better first hit (DECISIONS D25). The API skips it when the query carries an
- * explicit precision signal, so the label says so rather than promising a
- * change that will not happen.
+ * It is a flag on /search rather than the default because it costs a few
+ * hundred ms and, measured against the judged query set, it trades top-10
+ * ordering for a better first hit (DECISIONS D25). The API skips it when the
+ * query carries an explicit precision signal, so the label says so rather than
+ * promising a change that will not happen.
  */
 function RerankToggle({
   on,
   onChange,
+  state,
+  skipReason,
 }: {
   on: boolean;
   onChange: (v: boolean) => void;
+  /** What the last response actually did, which is not always what was asked. */
+  state: RerankState;
+  skipReason?: string;
 }) {
+  // The API declines to rerank queries with quoted phrases or field operators
+  // (D23). The toggle used to stay lit either way, so a skipped rerank looked
+  // like a button that did nothing. It now reports what happened.
+  const skipped = state === "skipped";
+  const title = skipped
+    ? skipReason
+      ? "Skipped for this query: it has a quoted phrase or a field operator (from:, to:, before:, after:), and reranking never overrides those. Try a plain-language query."
+      : "Nothing to rerank for this query."
+    : on
+      ? "Reranking the top 50 results with a local cross-encoder. Click to turn off."
+      : "Re-score the top 50 results with a local cross-encoder. Adds a few hundred ms, and is skipped for quoted phrases and field operators.";
+
   return (
     <button
       onClick={() => onChange(!on)}
       aria-pressed={on}
-      title="Re-score the top 50 results with a local cross-encoder. Adds 100-200ms, and is skipped for quoted phrases and field operators."
-      style={on ? { color: "var(--color-surface)" } : undefined}
+      title={title}
+      aria-label={skipped ? "Rerank on, but skipped for this query" : "Rerank"}
+      style={on && !skipped ? { color: "var(--color-surface)" } : undefined}
       className={[
         "meta flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors",
-        on
-          ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
-          : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
+        skipped
+          ? "border-dashed border-[var(--color-ink)] text-[var(--color-ink)]"
+          : on
+            ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
+            : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
       ].join(" ")}
     >
       <span
-        className="size-1.5 rounded-full"
-        style={{ background: on ? "#c08a2e" : "var(--color-faint)" }}
+        className={["size-1.5 rounded-full", state === "pending" ? "animate-pulse" : ""].join(" ")}
+        style={{
+          background: state === "applied" || state === "pending" ? "#c08a2e" : "var(--color-faint)",
+        }}
         aria-hidden
       />
-      Rerank
+      {skipped ? "Rerank skipped" : "Rerank"}
     </button>
   );
 }

@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     knn_num_candidates: int = 200
     #: Load the embedding model at startup so the first query is not slow.
     warm_model: bool = True
+    #: Load the cross-encoder in a background thread at startup. Its first use
+    #: otherwise costs ~8s (F19), which in the UI reads as a Rerank button that
+    #: does nothing. Background, so it never delays the API becoming ready.
+    warm_reranker: bool = True
 
 
 @lru_cache

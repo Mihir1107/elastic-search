@@ -332,3 +332,23 @@ def test_deep_pagination_at_ui_page_size_never_repeats(client: TestClient) -> No
         if not token:
             break
     assert len(seen) == len(set(seen))
+
+
+def test_skipped_rerank_says_why(client: TestClient) -> None:
+    """Regression: an operator query with rerank=true came back unchanged and silent.
+
+    The gate (D23) is correct, but a skip with no explanation looked like a
+    broken Rerank button in the UI.
+    """
+    q = "from:john.arnold@enron.com gas after:2001-07-01 before:2001-09-30"
+    body = client.get("/search", params={"q": q, "size": 5, "rerank": "true"}).json()
+    assert body["reranked"] is False
+    assert body["timings"]["rerank_ms"] == 0
+    assert any("reranking skipped" in w for w in body["warnings"]), body["warnings"]
+
+
+def test_free_text_rerank_applies_and_is_not_flagged(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "gas prices", "size": 5, "rerank": "true"}).json()
+    assert body["reranked"] is True
+    assert body["timings"]["rerank_ms"] > 0
+    assert not any("reranking skipped" in w for w in body["warnings"])

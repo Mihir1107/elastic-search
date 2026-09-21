@@ -357,7 +357,13 @@ export function search(params: SearchParams): SearchResponse {
       .map(([id, rrf]) => ({ id, rrf }));
   }
 
-  const rerank = params.rerank ?? false;
+  // Mirrors the API (D23): an explicit precision signal is never reranked.
+  const f = parsed.filters;
+  const explicit =
+    parsed.phrases.length > 0 ||
+    Boolean(f.from?.length || f.to?.length || f.cc?.length || f.after || f.before);
+  const rerankSkipped = (params.rerank ?? false) && explicit;
+  const rerank = (params.rerank ?? false) && !explicit;
   if (rerank && hasQuery) {
     // The cross-encoder sees only the top 50, per the spec.
     const head = ordered.slice(0, 50);
@@ -399,6 +405,11 @@ export function search(params: SearchParams): SearchResponse {
     timing: timing(ordered.length, rerank, vec.size > 0),
     next_page_token: offset + size < ordered.length ? String(offset + size) : null,
     reranked: rerank,
+    warnings: rerankSkipped
+      ? [
+          "reranking skipped: the query has a quoted phrase or a field operator, and the reranker never overrides an explicit precision signal",
+        ]
+      : [],
   };
 }
 

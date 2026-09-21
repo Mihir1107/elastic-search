@@ -137,6 +137,8 @@ export interface SearchResponse {
   timing: Timing;
   next_page_token: string | null;
   reranked: boolean;
+  /** Human-readable notes from the API, e.g. why a requested rerank was skipped. */
+  warnings: string[];
 }
 
 export interface ThreadResponse {

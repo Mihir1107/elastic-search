@@ -568,3 +568,20 @@ arrives as `Enron\x01,s` and paints as "Enron ,s". Measured at **131 of 20,001 d
 repeats the repair for display because the serving index predates the parser fix. A full reindex
 for 0.65% of documents was not judged worth ~50 minutes of re-embedding — the display fix makes
 it invisible now, and the next ingest fixes it properly.
+
+## D34 — A skipped rerank says so, and the cross-encoder warms at startup
+- **Report:** "the Rerank button does nothing." Two causes, both real.
+- **Cause one — the gate was silent.** For a query with a phrase or an operator
+  (`from:john.arnold@enron.com gas after:2001-07-01 before:2001-09-30`), `rerank=true` is
+  deliberately skipped (D23). The API returned `reranked: false`, `rerank_ms: 0` and the same
+  results, with no warning, while the button stayed lit. Correct behaviour, indistinguishable
+  from a broken button. The API now adds a `reranking skipped: ...` warning, the frontend
+  adapter stops discarding `warnings`, and the toggle shows a dashed **Rerank skipped** state
+  with the reason, instead of claiming to be on. The fixture engine now applies the same gate;
+  it previously "reranked" operator queries the real API never would.
+- **Cause two — the first rerank took ~8 s** (F19) while the cross-encoder loaded, which on a
+  plain-language query also reads as nothing happening. It now loads in a background task at
+  startup (`warm_reranker`, default on). Not awaited, so the API is ready first; measured, the
+  API reported ready and the reranker finished ~8 s later, and the first rerank after warmup
+  took **226 ms** instead of ~8 s. F19's "left lazy deliberately" is reversed: an
+  off-by-default feature with a prominent button still has to respond when pressed.

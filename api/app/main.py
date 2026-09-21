@@ -9,6 +9,7 @@ logs, never depended upon (docs/SPEC.md section 3, DECISIONS D1).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,6 +23,16 @@ from app.routes import emails, health, search, suggest, threads
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("ledger.api")
+
+
+async def _warm_reranker(name: str) -> None:
+    try:
+        from app.search.rerank import get_reranker
+
+        await asyncio.to_thread(get_reranker, name)
+        logger.info("reranker warm: %s", name)
+    except Exception as exc:
+        logger.warning("could not warm the reranker: %s", exc)
 
 
 @asynccontextmanager
@@ -57,6 +68,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("embedding model warm: %s", settings.embed_model)
         except Exception as exc:
             logger.warning("could not warm the embedding model: %s", exc)
+
+    if settings.warm_reranker:
+        # Not awaited: the API is ready before the cross-encoder is. A request
+        # that arrives first simply waits on the loader's lock, as it did before.
+        app.state.reranker_warmup = asyncio.create_task(_warm_reranker(settings.rerank_model))
 
     try:
         yield

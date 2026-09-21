@@ -248,6 +248,7 @@ export function adaptSearch(w: WireSearch): SearchResponse {
     timing: adaptTiming(w.timings),
     next_page_token: w.next_page_token,
     reranked: w.reranked ?? false,
+    warnings: w.warnings ?? [],
   };
 }
 

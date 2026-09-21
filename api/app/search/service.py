@@ -245,10 +245,16 @@ async def run_search(
     # Reranking is a request flag over a config default, and its cost is reported
     # separately so it can never hide inside total_ms (docs/SPEC.md section 5).
     use_rerank = settings.rerank_enabled if rerank is None else rerank
+    rerank_note: str | None = None
     if use_rerank and settings.rerank_free_text_only and (parsed.phrases or parsed.has_filters):
         # The user gave an explicit precision signal; do not let a semantic
-        # reranker talk us out of it.
+        # reranker talk us out of it (D23). Say so: a skipped rerank that
+        # returns the same results with no explanation looks like a broken one.
         use_rerank = False
+        rerank_note = (
+            "reranking skipped: the query has a quoted phrase or a field operator, "
+            "and the reranker never overrides an explicit precision signal"
+        )
     if use_rerank and parsed.semantic_text and fused:
         t0 = perf_counter()
         # Same reasoning as the embedder: the cross-encoder is heavier still.
@@ -289,6 +295,8 @@ async def run_search(
     )
 
     warnings = list(parsed.warnings)
+    if rerank_note:
+        warnings.append(rerank_note)
     if len(fused) >= settings.fusion_window and next_token is None:
         warnings.append(f"pagination is limited to the top {settings.fusion_window} fused results")
 

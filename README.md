@@ -42,7 +42,7 @@ a polished investigation UI:
 | **Ingestion** | 7-stage resumable pipeline: download → parse → normalise → dedupe → thread → embed → index |
 | **Search API** | FastAPI service with query understanding, hybrid BM25 + kNN retrieval, manual RRF fusion, optional cross-encoder reranking, faceted aggregations, autocomplete |
 | **Frontend** | Next.js 15 editorial UI with syntax-highlighted search bar, facet filtering, reading pane, thread reconstruction, latency diagnostics |
-| **Evaluation** | 50-query relevance harness with auto-grading rules, NDCG@10/MRR/Recall metrics, CI regression gating |
+| **Evaluation** | 68-query relevance harness with a tune/test split, auto-grading rules, NDCG@10/MRR/Recall metrics, CI regression gating |
 | **Operations** | Latency benchmarking, chaos testing (kill-under-load HA), snapshot & restore |
 
 > **Status**: complete. The shipped index holds **52,219 unique emails** from
@@ -53,8 +53,9 @@ a polished investigation UI:
 > alias untouched.
 >
 > Two things are deliberately *not* claimed: this is 100k of 517,401 messages,
-> and the 12 conceptual evaluation queries are still unlabelled. Both are
-> explained under [Known limitations](#known-limitations-stated-plainly).
+> and the 30 conceptual evaluation queries carry LLM labels, not human ones
+> (reviewable with `make eval-label`). Both are explained under
+> [Known limitations](#known-limitations-stated-plainly).
 
 ---
 
@@ -184,6 +185,10 @@ No `query_string` or `regexp` — user input never has query-injection power.
 | `GET /emails/{id}` | Full email document |
 | `GET /threads/{thread_id}` | Complete conversation thread, chronological |
 | `GET /suggest?prefix=` | Autocomplete over senders and subjects |
+| `PUT /emails/{id}/tags` | Replace an email's review tags (`relevant`, `privileged`, `hot`, ...) |
+| `POST /tags/batch` | Add / remove tags on up to 500 emails |
+| `GET /tags` | Tags in use, with counts |
+| `GET /export?q=&tag=...` | The result set as CSV: every match for a filter-only query, the ranked list for a text query (D37) |
 | `GET /health` | API + cluster health, license, node count, doc count |
 
 Every response includes a per-stage `timings` breakdown (`parse_ms`, `embed_ms`,
@@ -222,7 +227,7 @@ stats to `data/stats/<stage>.json`.
 | **2. Parse** | RFC-822 `BytesParser`; Lotus Notes DN recovery; quoted-text splitting; UTC date normalisation |
 | **3. Normalise** | Address lowercasing; recipient deduplication; whitespace collapsing; `person_id` assignment |
 | **4. Dedupe** | Content-addressed SHA-1 over `(from, recipients, date, subject, body)`; cross-mailbox merge |
-| **5. Thread** | Union-Find with path compression; RFC-822 `In-Reply-To`/`References` linkage; subject-fallback heuristic with 30-day participant window |
+| **5. Thread** | Union-Find with path compression; RFC-822 `In-Reply-To`/`References` linkage; subject fallback that only attaches a `Re:`/`Fw:` message to the one it answers, within 30 days (D36) |
 | **6. Embed** | `bge-small-en-v1.5` 384-d vectors; 200-token sliding window chunks (40-token overlap, max 8/doc); batched encoding; append-mode resume |
 | **7. Index** | Bulk load with disabled refresh; pre-cutover verification (count + vectors); atomic zero-downtime alias flip |
 
@@ -280,21 +285,22 @@ against regressions.
 
 ### Query Set
 
-50 queries across 5 categories:
+68 queries across 5 categories, alternately split into `tune` and `test` within
+each category. Settings are chosen on `tune`; `test` is the number to believe.
 
 | Category | Count | Examples |
 |---|---|---|
 | Exact lookup | 10 | `"rolling blackouts"`, `"force majeure"` |
 | Person + topic | 12 | `from:john.arnold@enron.com gas` |
 | Date-scoped | 8 | `from:john.arnold@enron.com after:2001-06-01 before:2001-09-30` |
-| Conceptual | 12 | `concerns about hiding financial losses` |
+| Conceptual | 30 | `concerns about hiding financial losses` |
 | Typo | 8 | `califronia energy crisis`, `megawat hours` |
 
 ### Judgment System
 
 - **Graded scale**: 0 (irrelevant) to 3 (exact answer)
 - **38 queries auto-graded** with deterministic rules (required phrases, sender match, date window)
-- **12 conceptual queries** need a human; an interactive CLI labels them (with optional LLM pre-labelling as a *suggestion*, off by default). **These are still unlabelled** — see the caveat under Results.
+- **30 conceptual queries** carry **LLM labels** (1,031 judgments on the `eval/prelabel.py` rubric, source `"llm"`), not human ones. A human label always replaces an LLM one, and `make eval-label` offers each LLM label for review with its grade as the default.
 - Unjudged queries **excluded** from means, never scored as zero
 
 ### Metrics
@@ -303,24 +309,25 @@ against regressions.
 - **MRR** — mean reciprocal rank of first relevant hit
 - **Recall@50** — proportion of known relevant docs in top 50
 
-### Results (52,219 documents, 38 judged queries)
+### Results (52,219 documents, 68 judged queries)
 
-| Method | NDCG@10 | MRR | Recall@50 |
-|---|---|---|---|
-| BM25 | 0.9087 | 0.9737 | 0.659 |
-| Vector | 0.6415 | 0.7474 | 0.502 |
-| **Hybrid** | **0.9079** | **0.9569** | **0.791** |
-| Hybrid + Rerank | 0.8982 | 0.9613 | 0.791 |
+| Method | NDCG@10 | tune | test | MRR |
+|---|---|---|---|---|
+| BM25 | 0.6791 | 0.6830 | 0.6751 | 0.8293 |
+| Vector | 0.6295 | 0.6726 | 0.5865 | 0.8624 |
+| **Hybrid** | **0.7673** | **0.7522** | **0.7824** | **0.9506** |
+| Hybrid + Rerank | 0.7934 | 0.8156 | 0.7713 | 0.9201 |
 
-**Read these honestly.** BM25 edges hybrid by 0.0008 here, and that is not
-evidence that fusion is not worth it: 38 of the 50 queries are graded by
-phrase / sender / date rules, which is exactly BM25's home ground, and the 12
-conceptual queries — the ones that would test the vector leg and reranking —
-are still unlabelled. `Recall@50` is comparative only, because the judgment
-pool is built from these same systems' own results.
+Hybrid beats BM25 in every category but typo and date-scoped, where the gap is ≤0.012. On the
+conceptual queries, where semantic retrieval earns its keep, it scores 0.533 against BM25's 0.359.
+Absolute conceptual NDCG is low by construction, because the judgment pools are deep. These
+numbers come after the fixes in DECISIONS D35 (phrase filter on the vector leg, spelling
+correction for the embedder, `minimum_should_match`). Before them, the same queries scored
+hybrid 0.735. `Recall@50` is comparative only, because the judgment pool is built from these
+same systems' own results.
 
-Reranking is **off by default** because it measured net-negative on this query
-set (DECISIONS D25). It is implemented, flagged per request (`?rerank=true`),
+Reranking is **off by default**: it helps overall and on `tune`, but is slightly
+worse on `test` (DECISIONS D25, D35). It is implemented, flagged per request (`?rerank=true`),
 and reports its own `rerank_ms` so its cost can never hide inside the total.
 
 ### Commands
@@ -548,7 +555,7 @@ elastic-search/
 │   │   ├── probe.py            #   license & RRF capability probing
 │   │   ├── names.py            #   display name normalisation
 │   │   ├── models.py           #   response models (SearchResponse, etc.)
-│   │   ├── routes/             #   endpoint routers (search, emails, threads, suggest, health)
+│   │   ├── routes/             #   endpoint routers (search, emails, threads, suggest, tags, export, health)
 │   │   └── search/             #   search pipeline
 │   │       ├── parser.py       #     query understanding & tokenisation
 │   │       ├── builder.py      #     Elasticsearch query construction
@@ -716,13 +723,16 @@ Negative results are recorded because they are as useful as the positive ones:
 - **100,000 of 517,401 messages.** The specification asks for the full corpus;
   this does not meet that as written (D27). Full ingest is 5–7 hours and needs
   the dedupe stage to spill to disk.
-- **The 12 conceptual queries are unlabelled**, so the relevance numbers are
-  measured on a query set that favours BM25 (F15).
+- **The 30 conceptual queries are labelled by an LLM, not a human** (D35). The
+  labels are consistent but one model's judgment; a method sharing its biases
+  could be flattered. The rule-graded categories carry no such risk and tell
+  the same story. `make eval-label` reviews them.
 - **This corpus has no reply headers and no attachments.** Threading falls back
-  to normalised subjects, and the Attachments facet is always empty. Both are
-  properties of the CMU release, verified against the raw files (F1, F18).
-- **First use of the reranker costs ~8.8 s** while the cross-encoder loads; it is
-  ~314 ms warm (F19).
+  to subjects, attaching only a reply to the message it answers (D36), and the
+  Attachments facet hides itself when empty. Both are properties of the CMU
+  release, verified against the raw files (F1, F18).
+- **The reranker loads at startup** in the background (~8 s, D34); it is opt-in
+  because its gain does not hold on the test split (D35).
 
 ---
 

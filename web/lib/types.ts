@@ -1,10 +1,10 @@
 /**
  * Wire types for the Ledger search API.
  *
- * These mirror the endpoint contract in docs/SPEC.md section 6. The
- * backend (Phase 2) is not built yet, so `lib/mock/engine.ts` implements the
- * same shapes in the browser. When the real API lands, only `lib/api.ts`
- * changes — every component here is already speaking the final contract.
+ * These mirror the endpoint contract in docs/SPEC.md section 6. `lib/adapt.ts`
+ * maps the FastAPI wire shapes onto them, and `lib/mock/engine.ts` implements
+ * the same shapes in the browser for fixture mode (NEXT_PUBLIC_USE_MOCK), so
+ * every component speaks one contract whichever source is live.
  */
 
 /** How the query parser classified one span of the raw query string. */

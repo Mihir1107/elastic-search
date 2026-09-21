@@ -41,12 +41,19 @@ def test_only_after_produces_an_open_ended_range() -> None:
     assert "gte" in rng and "lte" not in rng
 
 
-def test_bm25_applies_length_scaled_fuzziness_and_field_boosts() -> None:
+def test_bm25_applies_length_scaled_fuzziness_and_the_given_fields() -> None:
     query = build_bm25_query(parse("raptor partnership"), [])
     mm = query["bool"]["must"][0]["multi_match"]
     assert mm["fields"] == BM25_FIELDS
-    assert "subject^3" in mm["fields"]
     assert mm["fuzziness"] == FUZZINESS
+    tuned = build_bm25_query(parse("raptor"), [], ["subject^2", "body"])
+    assert tuned["bool"]["must"][0]["multi_match"]["fields"] == ["subject^2", "body"]
+
+
+def test_builder_fallback_fields_match_the_configured_default() -> None:
+    from app.config import Settings
+
+    assert Settings.model_fields["bm25_fields"].default == BM25_FIELDS
 
 
 def test_phrases_become_phrase_clauses_on_exact_subfields() -> None:

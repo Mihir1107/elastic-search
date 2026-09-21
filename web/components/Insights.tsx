@@ -172,24 +172,27 @@ export function Insights({
           </Section>
         )}
 
-        <Section title="Attachments">
-          <button
-            onClick={() =>
-              onAttachments(filters.has_attachment === true ? undefined : true)
-            }
-            aria-pressed={filters.has_attachment === true}
-            className={[
-              "w-full rounded-lg px-1.5 py-1.5 text-left text-[0.875rem] transition-colors",
-              filters.has_attachment === true
-                ? "bg-[var(--color-sunk)] font-semibold"
-                : "hover:bg-[var(--color-sunk)]",
-            ].join(" ")}
-          >
-            {facets.attachments.with > 0
-              ? `${plural(facets.attachments.with, "email")} with files`
-              : "No attachments in these results"}
-          </button>
-        </Section>
+        {/* Hidden while there is nothing to filter to, unless the filter is on. */}
+        {(facets.attachments.with > 0 || filters.has_attachment !== undefined) && (
+          <Section title="Attachments">
+            <button
+              onClick={() =>
+                onAttachments(filters.has_attachment === true ? undefined : true)
+              }
+              aria-pressed={filters.has_attachment === true}
+              className={[
+                "w-full rounded-lg px-1.5 py-1.5 text-left text-[0.875rem] transition-colors",
+                filters.has_attachment === true
+                  ? "bg-[var(--color-sunk)] font-semibold"
+                  : "hover:bg-[var(--color-sunk)]",
+              ].join(" ")}
+            >
+              {facets.attachments.with > 0
+                ? `${plural(facets.attachments.with, "email")} with files`
+                : "No attachments in these results"}
+            </button>
+          </Section>
+        )}
       </div>
 
       {/* One quiet editorial note, the only decoration on the page. */}

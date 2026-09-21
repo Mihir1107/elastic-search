@@ -14,8 +14,10 @@ from typing import Any
 
 from app.search.parser import FUZZINESS, ParsedQuery, is_address
 
-#: subject is boosted; from/to .text let a name match without an address.
-BM25_FIELDS = ["subject^3", "body", "from.text", "to.text"]
+#: Fallback when no field list is passed; the API always passes
+#: ``Settings.bm25_fields``, where the (un)boosting was tuned (D24). from/to
+#: .text let a name match without an address.
+BM25_FIELDS = ["subject", "body", "from.text", "to.text"]
 
 #: Cap how much of a body the highlighter re-analyses. Highlighting is by far the
 #: most expensive part of a search (measured: ~1.9s for 200 docs vs 45ms without),

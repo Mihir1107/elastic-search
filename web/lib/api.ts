@@ -1,8 +1,8 @@
 /**
  * The only module that knows whether data comes from the real API or fixtures.
  *
- * Set NEXT_PUBLIC_USE_MOCK=false once the Phase 2 endpoints are live; nothing
- * else in the app changes. Requests go through /api/proxy/* so the FastAPI
+ * NEXT_PUBLIC_USE_MOCK=false talks to the FastAPI service; anything else serves
+ * the in-browser fixtures. Nothing else in the app changes. Requests go through /api/proxy/* so the FastAPI
  * host stays server-side.
  */
 

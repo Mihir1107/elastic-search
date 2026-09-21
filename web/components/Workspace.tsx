@@ -69,7 +69,7 @@ export function Workspace(p: Props) {
   };
 
   const lenses: LensCount[] = data
-    ? [
+    ? ([
         { id: "emails", label: "Emails", n: data.total },
         { id: "people", label: "People", n: data.facets.senders.length },
         { id: "dates", label: "Dates", n: data.facets.date_histogram.filter((b) => b.doc_count > 0).length },
@@ -79,7 +79,11 @@ export function Workspace(p: Props) {
           n: (data.facets.topics.length ? data.facets.topics : data.facets.folders).length,
         },
         { id: "attachments", label: "Attachments", n: data.facets.attachments.with },
-      ]
+      ] satisfies LensCount[]).filter(
+        // This corpus records no attachments at all; an always-empty tab is noise.
+        // It still shows while selected, so switching away is never stranded.
+        (l) => l.id !== "attachments" || l.n > 0 || p.lens === "attachments",
+      )
     : [];
 
   return (

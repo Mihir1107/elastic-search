@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
-import { cleanText, longDate, personName, plural, shortDate } from "@/lib/format";
+import { longDate, personName, plural, shortDate } from "@/lib/format";
 import { Avatar } from "./Avatar";
 
 /** One spring for the card and everything riding inside it, so they move as one. */
@@ -325,7 +325,7 @@ function Message({ doc }: { doc: EmailDoc | null }) {
         </time>
       </div>
 
-      <div className="prose-mail mt-5">{cleanText(doc.body)}</div>
+      <div className="prose-mail mt-5">{doc.body}</div>
 
       {doc.quoted_text && (
         <details className="mt-5 border-t border-[var(--color-rule)] pt-4">
@@ -429,7 +429,7 @@ function Thread({ thread, currentId }: { thread: ThreadResponse | null; currentI
                   current ? "" : "line-clamp-2 text-[var(--color-muted)]",
                 ].join(" ")}
               >
-                {cleanText(m.body)}
+                {m.body}
               </p>
             </li>
           );

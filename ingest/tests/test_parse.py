@@ -208,3 +208,18 @@ def test_reply_and_forward_prefixes_are_recognised() -> None:
     assert not is_reply_or_forward("Schedule Crawler: HourAhead Failure")
     assert is_forward("Re: FW: Deal") and is_forward("Fwd: x")
     assert not is_forward("Re: Deal")
+
+
+def test_clean_text_repairs_quotes_dashes_bullets_and_trademarks() -> None:
+    from ingest.parse import clean_text
+
+    assert (
+        clean_text("do \x01&reality checks\x018, create") == "do \u201creality checks\u201d, create"
+    )
+    assert (
+        clean_text("In \x01+Digital Storm\x01, Philipp") == "In \u2018Digital Storm\u2019 Philipp"
+    )
+    assert clean_text("LONDON \x01) A futures trader") == "LONDON \u2014 A futures trader"
+    assert clean_text("\x01\x07 Establish Hector Road") == "\u2022 Establish Hector Road"
+    assert clean_text("SourceIT\x01v research") == "SourceIT\u2122 research"
+    assert clean_text("FERC\x02\x07s Massey") == "FERC\u2019s Massey"

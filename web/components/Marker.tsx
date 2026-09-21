@@ -10,7 +10,6 @@
  * keyword leg produced it, blue when it came from the semantic leg.
  */
 
-import { cleanText } from "@/lib/format";
 
 export function Marker({
   fragment,
@@ -66,7 +65,5 @@ function decode(s: string): string {
   for (const [entity, char] of Object.entries(NAMED)) {
     out = out.split(entity).join(char);
   }
-  // Corpus artefact repair happens after entity decoding so the control
-  // byte is visible to the cleaner (see lib/format.ts).
-  return cleanText(out.split("&amp;").join("&"));
+  return out.split("&amp;").join("&");
 }

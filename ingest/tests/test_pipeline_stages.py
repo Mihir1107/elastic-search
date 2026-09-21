@@ -264,3 +264,79 @@ def test_merely_sharing_a_participant_does_not_link() -> None:
     )
     t = _threads(a, b)
     assert t["a"] != t["b"]
+
+
+# --------------------------- embed: re-runs --------------------------
+
+
+class _EncodingModel(_FakeModel):
+    """Counts what it is asked to embed, so a test can see vectors being reused."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoded: list[str] = []
+
+    def encode(self, texts: list[str], **_: Any) -> list[list[float]]:
+        self.encoded.extend(texts)
+        return [[float(len(t)), 0.0] for t in texts]
+
+
+def _embed(
+    tmp_path: Any, docs: list[dict[str, Any]], model: _EncodingModel
+) -> list[dict[str, Any]]:
+    from ingest import embed as embed_stage
+    from ingest.config import IngestSettings
+    from ingest.jsonl import read_jsonl
+
+    settings = IngestSettings(chunk_tokens=50, chunk_overlap=5, max_chunks=4)
+    out = tmp_path / "embedded.jsonl"
+    original = embed_stage.load_model
+    embed_stage.load_model = lambda name: model  # type: ignore[assignment,return-value]
+    try:
+        embed_stage.run(tmp_path / "unused.jsonl", out, settings, docs=[dict(d) for d in docs])
+    finally:
+        embed_stage.load_model = original
+    return list(read_jsonl(out))
+
+
+def test_a_rerun_takes_fresh_metadata_and_reuses_unchanged_vectors(tmp_path: Any) -> None:
+    doc = _doc(subject="Budget", body="one two three")
+    doc.update(id="d1", thread_id="old-thread")
+    first = _embed(tmp_path, [doc], _EncodingModel())
+
+    model = _EncodingModel()
+    second = _embed(tmp_path, [{**doc, "thread_id": "new-thread"}], model)
+    assert second[0]["thread_id"] == "new-thread", "metadata must come from the fresh input"
+    assert second[0]["chunks"] == first[0]["chunks"]
+    assert model.encoded == [], "unchanged text must not be re-embedded"
+
+
+RSQUO = "\u2019"
+
+
+def test_a_rerun_re_embeds_a_document_whose_text_changed(tmp_path: Any) -> None:
+    doc = _doc(subject="Budget", body="Enron\x01,s plan")
+    doc["id"] = "d1"
+    _embed(tmp_path, [doc], _EncodingModel())
+
+    model = _EncodingModel()
+    out = _embed(tmp_path, [{**doc, "body": f"Enron{RSQUO}s plan"}], model)
+    assert model.encoded, "changed text must be re-embedded"
+    assert f"Enron{RSQUO}s" in out[0]["chunks"][0]["text"]
+
+
+def test_an_interrupted_run_resumes_without_redoing_written_rows(tmp_path: Any) -> None:
+    import json
+
+    a, b = _doc(body="alpha text"), _doc(body="beta text")
+    a["id"], b["id"] = "a", "b"
+    # A previous run died after writing row "a" to the partial file.
+    partial = tmp_path / "embedded.jsonl.partial"
+    partial.write_text(json.dumps({**a, "chunks": [{"text": "kept", "vector": [1.0]}]}) + "\n")
+
+    model = _EncodingModel()
+    out = _embed(tmp_path, [a, b], model)
+    assert [r["id"] for r in out] == ["a", "b"]
+    assert out[0]["chunks"][0]["text"] == "kept"
+    assert not partial.exists(), "a completed run replaces the output"
+    assert all("alpha" not in t for t in model.encoded)

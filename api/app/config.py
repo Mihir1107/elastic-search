@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     #: off this query: p95 220.5ms at concurrency 4 versus 294.9ms at 200.
     fusion_window: int = 120
     knn_num_candidates: int = 200
+    #: Embed the spelling-corrected free text rather than the raw typo (D35).
+    spell_correct_embedding: bool = True
     #: Load the embedding model at startup so the first query is not slow.
     warm_model: bool = True
     #: Load the cross-encoder in a background thread at startup. Its first use

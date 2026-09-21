@@ -154,6 +154,20 @@ export function Workspace(p: Props) {
                 &ldquo;{p.committed || p.draft}&rdquo;
               </span>
             </h1>
+            {data && data.parsed.corrections.length > 0 && (
+              <span
+                className="meta shrink-0"
+                title="Keyword matching already tolerates typos; the corrected spelling is what semantic search looked for."
+              >
+                Meaning searched as{" "}
+                {data.parsed.corrections.map((c, i) => (
+                  <span key={c.original}>
+                    {i > 0 && ", "}
+                    <span className="font-serif text-[var(--color-ink)]">&ldquo;{c.suggested}&rdquo;</span>
+                  </span>
+                ))}
+              </span>
+            )}
             {p.filterCount > 0 && (
               <button
                 onClick={p.onClearFilters}

@@ -25,6 +25,11 @@ class Timings(BaseModel):
     total_ms: float = 0.0
 
 
+class Correction(BaseModel):
+    original: str
+    suggested: str
+
+
 class Understood(BaseModel):
     """How the query was interpreted -- shown so the behaviour is explainable."""
 
@@ -36,6 +41,8 @@ class Understood(BaseModel):
     subject: list[str] = []
     after: str | None = None
     before: str | None = None
+    #: Misspellings corrected before the query text was embedded.
+    corrections: list[Correction] = []
     model_config = ConfigDict(populate_by_name=True)
 
 

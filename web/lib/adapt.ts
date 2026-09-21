@@ -49,6 +49,7 @@ interface WireUnderstood {
   subject: string[];
   after: string | null;
   before: string | null;
+  corrections?: { original: string; suggested: string }[];
 }
 
 interface WireHit {
@@ -233,6 +234,7 @@ function adaptParsed(u: WireUnderstood, query: string): ParsedQuery {
       after: u.after ?? undefined,
       before: u.before ?? undefined,
     },
+    corrections: u.corrections ?? [],
     ...(query ? {} : {}),
   };
 }

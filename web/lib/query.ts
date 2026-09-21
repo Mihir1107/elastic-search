@@ -128,7 +128,8 @@ export function parse(input: string): ParsedQuery {
     free.push(t.value);
   }
 
-  return { tokens, free_text: free.join(" "), phrases, filters };
+  // Spelling corrections come from the server's index; the client parser has none.
+  return { tokens, free_text: free.join(" "), phrases, filters, corrections: [] };
 }
 
 /** True when the query carries no retrievable content (only empty operators). */

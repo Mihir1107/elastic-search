@@ -35,6 +35,17 @@ def embed_query(text: str, model_name: str, prefix: str = "") -> list[float]:
     return [float(x) for x in vector[0]]
 
 
+def is_known_word(word: str, model_name: str) -> bool:
+    """True when the model's vocabulary holds ``word`` as one whole token.
+
+    A misspelling is split into sub-word pieces ("califronia" -> cal ##if
+    ##ronia); a word the model learned is not. Spelling correction uses this to
+    leave alone words the model represents, even when the corpus lacks them.
+    """
+    tokenizer = get_model(model_name).tokenizer
+    return len(tokenizer.tokenize(word.lower())) == 1
+
+
 def reset_cache() -> None:
     """Test hook."""
     global _model

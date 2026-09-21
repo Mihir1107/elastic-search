@@ -363,3 +363,17 @@ def test_a_quoted_phrase_constrains_the_vector_leg_too(client: TestClient) -> No
         email = client.get(f"/emails/{hit['id']}").json()
         text = " ".join(f"{email['subject']} {email['body']}".lower().split())
         assert "force majeure" in text, hit["id"]
+
+
+def test_a_typo_is_corrected_for_the_embedder_and_reported(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "califronia energy crisis", "size": 5}).json()
+    assert body["understood"]["corrections"] == [
+        {"original": "califronia", "suggested": "california"}
+    ]
+    assert body["understood"]["terms"] == ["califronia", "energy", "crisis"]
+
+
+def test_real_words_are_never_corrected(client: TestClient) -> None:
+    for q in ("complaints that the new software keeps crashing", "hiding financial losses"):
+        body = client.get("/search", params={"q": q, "size": 5}).json()
+        assert body["understood"]["corrections"] == [], q

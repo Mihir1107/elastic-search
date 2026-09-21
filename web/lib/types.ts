@@ -30,6 +30,13 @@ export interface ParsedQuery {
   free_text: string;
   phrases: string[];
   filters: SearchFilters;
+  /** Misspellings the API corrected before embedding the query (keyword search keeps the typo, fuzzily). */
+  corrections: Correction[];
+}
+
+export interface Correction {
+  original: string;
+  suggested: string;
 }
 
 export interface SearchFilters {

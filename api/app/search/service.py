@@ -27,6 +27,7 @@ from elasticsearch import AsyncElasticsearch
 
 from app.config import Settings
 from app.models import (
+    Correction,
     Facet,
     SearchHit,
     SearchResponse,
@@ -45,10 +46,12 @@ from app.search.builder import (
     build_structured_filters,
     phrase_filters,
 )
-from app.search.embedder import embed_query
+from app.search.embedder import embed_query, is_known_word
 from app.search.fusion import FusedHit, fuse
 from app.search.parser import ParsedQuery, parse
 from app.search.rerank import rerank as rerank_hits
+from app.search.spelling import build_suggest, corrected_text
+from app.search.spelling import corrections as find_corrections
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +96,7 @@ def _preference_for(raw_query: str) -> str:
     return "ledger-" + hashlib.sha1(raw_query.encode("utf-8")).hexdigest()[:16]
 
 
-def _understood(query: ParsedQuery) -> Understood:
+def _understood(query: ParsedQuery, corrections: list[Correction] | None = None) -> Understood:
     return Understood(
         terms=list(query.terms),
         phrases=list(query.phrases),
@@ -103,6 +106,7 @@ def _understood(query: ParsedQuery) -> Understood:
         subject=list(query.subject),
         after=query.after.isoformat() if query.after else None,
         before=query.before.isoformat() if query.before else None,
+        corrections=corrections or [],
     )
 
 
@@ -198,6 +202,9 @@ async def run_search(
         "aggs": facets_mod.build_aggs(),
         "track_total_hits": True,
     }
+    suggest = build_suggest(parsed) if settings.spell_correct_embedding else None
+    if suggest:
+        request["suggest"] = suggest
     tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
     if parsed.has_text:
         request["sort"] = [{"_score": {"order": "desc"}}, tiebreak]
@@ -214,7 +221,15 @@ async def run_search(
     if method in ("hybrid", "bm25"):
         legs["bm25"] = bm25_response["hits"]["hits"]
 
-    if parsed.semantic_text and method in ("hybrid", "vector"):
+    fixes = find_corrections(
+        parsed,
+        bm25_response.body,
+        lambda word: is_known_word(word, settings.embed_model),
+    )
+    semantic_text = corrected_text(parsed, fixes) if fixes else parsed.semantic_text
+    corrections = [Correction(original=f.original, suggested=f.suggested) for f in fixes]
+
+    if semantic_text and method in ("hybrid", "vector"):
         t0 = perf_counter()
         # Off the event loop: encoding is synchronous CPU work, and running it
         # inline stalls every other in-flight request for its whole duration.
@@ -224,7 +239,7 @@ async def run_search(
         # torch releases the GIL inside the forward pass, so a worker thread
         # genuinely overlaps with the event loop's I/O.
         vector = await asyncio.to_thread(
-            embed_query, parsed.semantic_text, settings.embed_model, settings.bge_query_prefix
+            embed_query, semantic_text, settings.embed_model, settings.bge_query_prefix
         )
         timings.embed_ms = round((perf_counter() - t0) * 1000, 2)
 
@@ -259,12 +274,12 @@ async def run_search(
             "reranking skipped: the query has a quoted phrase or a field operator, "
             "and the reranker never overrides an explicit precision signal"
         )
-    if use_rerank and parsed.semantic_text and fused:
+    if use_rerank and semantic_text and fused:
         t0 = perf_counter()
         # Same reasoning as the embedder: the cross-encoder is heavier still.
         fused = await asyncio.to_thread(
             rerank_hits,
-            parsed.semantic_text,
+            semantic_text,
             fused,
             settings.rerank_model,
             settings.rerank_window,
@@ -321,7 +336,7 @@ async def run_search(
     timings.total_ms = round((perf_counter() - started) * 1000, 2)
     return SearchResponse(
         query=q,
-        understood=_understood(parsed),
+        understood=_understood(parsed, corrections),
         total=total,
         size=page_size,
         hits=[_to_hit(hit) for hit in page],

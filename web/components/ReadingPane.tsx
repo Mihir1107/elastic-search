@@ -8,12 +8,16 @@
  * switching never costs you your place in the results.
  */
 
-import { useEffect, useState } from "react";
-import { motion } from "motion/react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
 import { cleanText, longDate, personName, plural, shortDate } from "@/lib/format";
 import { Avatar } from "./Avatar";
+
+/** One spring for the card and everything riding inside it, so they move as one. */
+const MORPH = { type: "spring", stiffness: 340, damping: 34, mass: 0.9 } as const;
 
 export function ReadingPane({
   hit,
@@ -60,6 +64,49 @@ export function ReadingPane({
     return () => ac.abort();
   }, [hit, tab]);
 
+  // The pane is rendered twice (column and small-screen overlay), so shared
+  // layout ids are scoped to the instance; otherwise the hidden copy would
+  // take the lead and the visible card would vanish.
+  const uid = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [morphing, setMorphing] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Where the reader was, as a fraction: the text reflows at the new width, so
+  // a pixel offset would land somewhere else in the message.
+  const scrollFraction = useRef(0);
+
+  useEffect(() => setPortalReady(true), []);
+
+  // A different email, or none, starts collapsed.
+  useEffect(() => {
+    setExpanded(false);
+  }, [hit?.id]);
+
+  const toggle = useCallback((next: boolean) => {
+    const el = bodyRef.current;
+    if (el) {
+      const room = el.scrollHeight - el.clientHeight;
+      scrollFraction.current = room > 0 ? el.scrollTop / room : 0;
+    }
+    setExpanded(next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop = scrollFraction.current * (el.scrollHeight - el.clientHeight);
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") toggle(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded, toggle]);
+
   if (!hit) {
     return (
       <div className="card grid h-full min-h-[320px] place-items-center px-8 py-16 text-center">
@@ -73,15 +120,29 @@ export function ReadingPane({
     );
   }
 
-  return (
+  const card = (
     <motion.div
-      key={hit.id}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-      className="card flex h-full flex-col overflow-hidden"
+      layoutId={`reading-pane-${uid}-${hit.id}`}
+      // Radius set as a style so motion can correct it while the card scales.
+      style={{ borderRadius: expanded ? 14 : 10 }}
+      transition={MORPH}
+      onLayoutAnimationStart={() => setMorphing(true)}
+      onLayoutAnimationComplete={() => setMorphing(false)}
+      role={expanded ? "dialog" : undefined}
+      aria-modal={expanded || undefined}
+      aria-label={expanded ? "Expanded message" : undefined}
+      className={[
+        "card flex h-full flex-col overflow-hidden",
+        expanded ? "pointer-events-auto w-full max-w-[980px] shadow-[0_24px_80px_-24px_rgb(27_27_25/0.35)]" : "",
+        // Rises above the fading backdrop while it flies back into the column.
+        !expanded && morphing ? "relative z-[60]" : "",
+      ].join(" ")}
     >
-      <header className="flex items-center gap-1 border-b border-[var(--color-rule)] px-4 py-2.5">
+      <motion.header
+        layout="position"
+        transition={MORPH}
+        className="flex items-center gap-1 border-b border-[var(--color-rule)] px-4 py-2.5"
+      >
         <nav className="flex gap-1" role="tablist">
           {(["message", "thread"] as const).map((t) => (
             <button
@@ -99,7 +160,7 @@ export function ReadingPane({
               {t}
               {tab === t && (
                 <motion.span
-                  layoutId="pane-tab"
+                  layoutId={`pane-tab-${uid}`}
                   className="absolute inset-x-1.5 -bottom-[11px] h-0.5 rounded-full bg-[var(--color-ink)]"
                 />
               )}
@@ -119,30 +180,111 @@ export function ReadingPane({
               />
             </svg>
           </IconButton>
+          {/* Only offered where the pane is a column; below lg it is already
+              an overlay of its own. */}
+          <IconButton
+            onClick={() => toggle(!expanded)}
+            label={expanded ? "Collapse" : "Expand"}
+            className="hidden lg:grid"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              {expanded ? (
+                <path
+                  d="M5.5 1.5v4h-4M8.5 12.5v-4h4M5.5 5.5L1.5 1.5M8.5 8.5l4 4"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : (
+                <path
+                  d="M8.5 1.5h4v4M5.5 12.5h-4v-4M12.5 1.5L8.5 5.5M1.5 12.5l4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
+            </svg>
+          </IconButton>
           <IconButton onClick={onClose} label="Close">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
               <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </IconButton>
         </div>
-      </header>
+      </motion.header>
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
-        {!error && tab === "message" && <Message doc={doc} />}
-        {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}
-      </div>
+      <motion.div
+        layout="position"
+        transition={MORPH}
+        ref={bodyRef}
+        className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
+        {/* A measure, not the full overlay width: long lines are hard to read. */}
+        <div className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}>
+          {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
+          {!error && tab === "message" && <Message doc={doc} />}
+          {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}
+        </div>
+      </motion.div>
     </motion.div>
+  );
+
+  return (
+    <>
+      {/* The column slot. It keeps the fade-in for a newly opened email, and
+          stays mounted while expanded so the card has somewhere to fly back to. */}
+      <motion.div
+        key={hit.id}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+        className="h-full"
+      >
+        {!expanded && card}
+      </motion.div>
+
+      {portalReady &&
+        createPortal(
+          <>
+            <AnimatePresence>
+              {expanded && (
+                <motion.div
+                  key="backdrop"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() => toggle(false)}
+                  className="fixed inset-0 z-50 bg-[rgb(27_27_25/0.28)] backdrop-blur-[3px]"
+                  aria-hidden
+                />
+              )}
+            </AnimatePresence>
+            {/* Not inside AnimatePresence: the overlay card has to unmount at
+                once so the column card can take over its layoutId and morph. */}
+            {expanded && (
+              <div className="pointer-events-none fixed inset-0 z-[55] flex justify-center p-6 sm:p-10">
+                {card}
+              </div>
+            )}
+          </>,
+          document.body,
+        )}
+    </>
   );
 }
 
 function IconButton({
   onClick,
   label,
+  className = "grid",
   children,
 }: {
   onClick: () => void;
   label: string;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -150,7 +292,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="grid size-7 place-items-center rounded-full text-[var(--color-muted)] transition-colors hover:bg-[var(--color-sunk)] hover:text-[var(--color-ink)]"
+      className={`${className} size-7 place-items-center rounded-full text-[var(--color-muted)] transition-colors hover:bg-[var(--color-sunk)] hover:text-[var(--color-ink)]`}
     >
       {children}
     </button>

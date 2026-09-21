@@ -8,6 +8,7 @@ from app.search.builder import (
     build_bm25_query,
     build_filters,
     build_knn,
+    phrase_filters,
 )
 from app.search.parser import FUZZINESS, parse
 
@@ -91,3 +92,17 @@ def test_subject_operator_becomes_a_subject_match_filter() -> None:
 
 def test_best_highlight_ignores_unknown_fields() -> None:
     assert best_highlight({"some.other.field": ["x"]}) == []
+
+
+def test_phrase_filters_require_each_phrase_on_the_exact_subfields() -> None:
+    filters = phrase_filters(parse('"force majeure" "credit rating" gas'))
+    assert len(filters) == 2
+    for clause, phrase in zip(filters, ("force majeure", "credit rating"), strict=True):
+        should = clause["bool"]["should"]
+        assert clause["bool"]["minimum_should_match"] == 1
+        assert {next(iter(c["match_phrase"])) for c in should} == {"subject.exact", "body.exact"}
+        assert should[1]["match_phrase"]["body.exact"] == phrase
+
+
+def test_phrase_filters_are_empty_without_phrases() -> None:
+    assert phrase_filters(parse("force majeure")) == []

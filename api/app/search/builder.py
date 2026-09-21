@@ -135,6 +135,30 @@ def build_structured_filters(f: StructuredFilters) -> list[dict[str, Any]]:
     return filters
 
 
+def _phrase_clause(phrase: str, subject_boost: float = 1) -> dict[str, Any]:
+    """The phrase must appear verbatim in the subject or the body."""
+    return {
+        "bool": {
+            "should": [
+                {"match_phrase": {"subject.exact": {"query": phrase, "boost": subject_boost}}},
+                {"match_phrase": {"body.exact": phrase}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
+def phrase_filters(query: ParsedQuery) -> list[dict[str, Any]]:
+    """Quoted phrases as hard filters, for the vector leg.
+
+    A quoted phrase is a requirement, not a hint. The BM25 leg enforces it in
+    ``must``; the vector leg has no notion of it, so without this every one of
+    its neighbours -- none of which need contain the phrase -- would be fused in
+    beside the documents that do.
+    """
+    return [_phrase_clause(phrase) for phrase in query.phrases]
+
+
 def build_bm25_query(
     query: ParsedQuery,
     filters: list[dict[str, Any]],
@@ -157,18 +181,7 @@ def build_bm25_query(
             }
         )
 
-    for phrase in query.phrases:
-        must.append(
-            {
-                "bool": {
-                    "should": [
-                        {"match_phrase": {"subject.exact": {"query": phrase, "boost": 3}}},
-                        {"match_phrase": {"body.exact": phrase}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
-        )
+    must.extend(_phrase_clause(phrase, subject_boost=3) for phrase in query.phrases)
 
     if not must:
         must.append({"match_all": {}})

@@ -352,3 +352,14 @@ def test_free_text_rerank_applies_and_is_not_flagged(client: TestClient) -> None
     assert body["reranked"] is True
     assert body["timings"]["rerank_ms"] > 0
     assert not any("reranking skipped" in w for w in body["warnings"])
+
+
+def test_a_quoted_phrase_constrains_the_vector_leg_too(client: TestClient) -> None:
+    """A phrase is a requirement: kNN neighbours lacking it must not be fused in."""
+    body = client.get("/search", params={"q": '"force majeure"', "size": 20}).json()
+    assert body["hits"]
+    assert any(hit["vector_rank"] is not None for hit in body["hits"])
+    for hit in body["hits"]:
+        email = client.get(f"/emails/{hit['id']}").json()
+        text = " ".join(f"{email['subject']} {email['body']}".lower().split())
+        assert "force majeure" in text, hit["id"]

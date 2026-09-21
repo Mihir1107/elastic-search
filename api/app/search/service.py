@@ -43,6 +43,7 @@ from app.search.builder import (
     build_filters,
     build_knn,
     build_structured_filters,
+    phrase_filters,
 )
 from app.search.embedder import embed_query
 from app.search.fusion import FusedHit, fuse
@@ -230,7 +231,10 @@ async def run_search(
         t0 = perf_counter()
         knn_response = await es.search(
             index=settings.emails_alias,
-            knn=build_knn(vector, filters, window, settings.knn_num_candidates),
+            # A quoted phrase is a requirement on both legs (D35).
+            knn=build_knn(
+                vector, filters + phrase_filters(parsed), window, settings.knn_num_candidates
+            ),
             size=window,
             source={"includes": _SOURCE_FIELDS},
             preference=preference,

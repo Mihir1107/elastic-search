@@ -199,3 +199,12 @@ def test_clean_text_drops_control_bytes_but_keeps_layout() -> None:
 
     assert clean_text("pad\x00\x00\x00end") == "padend"
     assert clean_text("keep\ttabs\nand\r\nnewlines") == "keep\ttabs\nand\r\nnewlines"
+
+
+def test_reply_and_forward_prefixes_are_recognised() -> None:
+    from ingest.parse import is_forward, is_reply_or_forward
+
+    assert is_reply_or_forward("RE: FW: Deal") and is_reply_or_forward("fwd:x")
+    assert not is_reply_or_forward("Schedule Crawler: HourAhead Failure")
+    assert is_forward("Re: FW: Deal") and is_forward("Fwd: x")
+    assert not is_forward("Re: Deal")

@@ -184,3 +184,83 @@ def test_embeddable_text_combines_subject_and_body() -> None:
     assert embeddable_text({"subject": "S", "body": "B"}) == "S\n\nB"
     assert embeddable_text({"subject": "S", "body": ""}) == "S"
     assert embeddable_text({"subject": "", "body": "B"}) == "B"
+
+
+def _threads(*docs: dict[str, Any]) -> dict[str, str]:
+    for i, doc in enumerate(docs):
+        doc.setdefault("id", f"id-{i}")
+    return {d["id"]: d["thread_id"] for d in assign_threads(list(docs), StageStats("thread"))}
+
+
+def test_repeated_sends_without_a_reply_prefix_are_not_a_thread() -> None:
+    alerts = [
+        _doc(subject="Schedule Crawler: HourAhead Failure", date=f"2002-02-05T{h:02d}:00:00+00:00")
+        for h in range(3)
+    ]
+    assert len(set(_threads(*alerts).values())) == 3
+
+
+def test_one_person_replying_to_two_people_makes_two_threads() -> None:
+    bill = _doc(
+        id="bill",
+        **{"from": "bill@enron.com"},
+        to=["vince@enron.com"],
+        subject="Congratulations",
+        date="2000-01-11T10:00:00+00:00",
+    )
+    john = _doc(
+        id="john",
+        **{"from": "john@enron.com"},
+        to=["vince@enron.com"],
+        subject="Congratulations",
+        date="2000-01-11T10:05:00+00:00",
+    )
+    to_bill = _doc(
+        id="to-bill",
+        **{"from": "vince@enron.com"},
+        to=["bill@enron.com"],
+        subject="Re: Congratulations",
+        date="2000-01-11T11:00:00+00:00",
+    )
+    to_john = _doc(
+        id="to-john",
+        **{"from": "vince@enron.com"},
+        to=["john@enron.com"],
+        subject="Re: Congratulations",
+        date="2000-01-11T11:05:00+00:00",
+    )
+    t = _threads(bill, john, to_bill, to_john)
+    assert t["bill"] == t["to-bill"]
+    assert t["john"] == t["to-john"]
+    assert t["bill"] != t["john"]
+
+
+def test_a_sender_following_up_or_forwarding_their_own_message_stays_in_thread() -> None:
+    first = _doc(id="first", subject="Gas Supply Proposal", to=["x@prpa.org"])
+    follow_up = _doc(
+        id="follow-up",
+        subject="RE: Gas Supply Proposal",
+        to=["x@prpa.org"],
+        date="2001-05-15T09:00:00+00:00",
+    )
+    forward = _doc(
+        id="forward",
+        subject="FW: Gas Supply Proposal",
+        to=["new@enron.com"],
+        date="2001-05-15T10:00:00+00:00",
+    )
+    t = _threads(first, follow_up, forward)
+    assert t["first"] == t["follow-up"] == t["forward"]
+
+
+def test_merely_sharing_a_participant_does_not_link() -> None:
+    a = _doc(id="a", **{"from": "a@enron.com"}, to=["hub@enron.com"], subject="Update")
+    b = _doc(
+        id="b",
+        **{"from": "b@enron.com"},
+        to=["hub@enron.com"],
+        subject="Re: Update",
+        date="2001-05-15T09:00:00+00:00",
+    )
+    t = _threads(a, b)
+    assert t["a"] != t["b"]

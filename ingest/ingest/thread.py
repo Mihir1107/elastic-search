@@ -2,20 +2,31 @@
 
 Primary signal is the RFC-822 reply graph (Message-ID / In-Reply-To /
 References), unioned with a disjoint-set structure so a whole reply chain
-collapses to one root. Messages that the header graph leaves isolated fall back
-to a normalised-subject heuristic: same subject with Re:/Fw: stripped, at least
-one shared participant, and within a bounded time window.
+collapses to one root. Messages the header graph leaves unconnected fall back
+to a subject heuristic, which on this corpus does all the work (the CALO
+release carries no reply headers). A message joins an earlier one only when
+
+* its own subject is a reply or forward (a Re:/Fw: prefix) of the same
+  normalised subject -- two unprefixed messages with one subject are separate
+  sends, not a conversation;
+* it answers that message: its sender received it, or it is addressed to that
+  message's sender -- merely sharing someone is not enough;
+* and it falls within the time window of that message.
+
+The first two rules are DECISIONS D36. Before them, "any shared participant"
+chained every hourly "Schedule Crawler: HourAhead Failure" alert into one
+343-message thread, a weekly newsletter into 44 messages over nine months, and
+one person's replies to 18 separate congratulations into a single thread.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
-from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-from ingest.parse import normalise_subject
+from ingest.parse import is_forward, is_reply_or_forward, normalise_subject
 from ingest.stats import StageStats
 
 
@@ -43,17 +54,31 @@ class DisjointSet:
             self._parent[hi] = lo
 
 
-def _participants(doc: dict[str, Any]) -> set[str]:
-    return {
-        str(a)
-        for a in [
-            doc.get("from") or "",
-            *(doc.get("to") or []),
-            *(doc.get("cc") or []),
-            *(doc.get("bcc") or []),
-        ]
-        if a
-    }
+def _recipients(doc: dict[str, Any]) -> set[str]:
+    addresses = [*(doc.get("to") or []), *(doc.get("cc") or []), *(doc.get("bcc") or [])]
+    return {str(a) for a in addresses if a}
+
+
+def _answer_strength(reply: dict[str, Any], earlier: dict[str, Any]) -> int:
+    """How plausibly ``reply`` continues ``earlier``: 2 strong, 1 weak, 0 not at all.
+
+    Strong: it is addressed to the sender of ``earlier`` -- a reply goes back to
+    whoever wrote. Weak: its sender received ``earlier`` (a reply-all, or the
+    reply went to someone else on the thread), or it is the same sender following
+    up with the same people or forwarding their own message on. Two messages
+    that merely share a participant -- one person replying to two different
+    people -- are neither.
+    """
+    sender, earlier_sender = str(reply.get("from") or ""), str(earlier.get("from") or "")
+    recipients, earlier_recipients = _recipients(reply), _recipients(earlier)
+    if earlier_sender and earlier_sender in recipients and sender != earlier_sender:
+        return 2
+    if sender and sender in earlier_recipients:
+        return 1
+    if sender and sender == earlier_sender:
+        same_people = bool(recipients & earlier_recipients)
+        return 1 if same_people or is_forward(str(reply.get("subject") or "")) else 0
+    return 0
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -100,16 +125,26 @@ def assign_threads(
         if len(group) < 2:
             continue
         ordered = sorted(group, key=lambda d: str(d.get("date") or ""))
-        for prev, curr in pairwise(ordered):
-            if dsu.find(str(prev["id"])) == dsu.find(str(curr["id"])):
+        for i, curr in enumerate(ordered):
+            if not is_reply_or_forward(str(curr.get("subject") or "")):
                 continue
-            if not (_participants(prev) & _participants(curr)):
-                continue
-            d1, d2 = _parse_iso(prev.get("date")), _parse_iso(curr.get("date"))
-            if d1 is not None and d2 is not None and abs((d2 - d1).total_seconds()) > window:
-                continue
-            dsu.union(str(prev["id"]), str(curr["id"]))
-            linked_by_subject += 1
+            when = _parse_iso(curr.get("date"))
+            # The most recent earlier message this one answers most strongly,
+            # inside the window: a direct reply to its author beats anything else.
+            best: dict[str, Any] | None = None
+            best_strength = 0
+            for prev in reversed(ordered[:i]):
+                then = _parse_iso(prev.get("date"))
+                if when and then and (when - then).total_seconds() > window:
+                    break
+                strength = _answer_strength(curr, prev)
+                if strength > best_strength:
+                    best, best_strength = prev, strength
+                    if strength == 2:
+                        break
+            if best is not None and dsu.find(str(best["id"])) != dsu.find(str(curr["id"])):
+                dsu.union(str(best["id"]), str(curr["id"]))
+                linked_by_subject += 1
 
     sizes: dict[str, int] = defaultdict(int)
     for doc in docs:

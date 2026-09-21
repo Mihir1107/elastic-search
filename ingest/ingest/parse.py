@@ -58,6 +58,19 @@ def split_quoted(body: str) -> tuple[str, str]:
     return "\n".join(lines[:cut]).strip(), "\n".join(lines[cut:]).strip()
 
 
+_FORWARD_PREFIX = re.compile(r"^\s*(?:(?:re|aw|sv)\s*:\s*)*(?:fw|fwd)\s*:", re.IGNORECASE)
+
+
+def is_forward(subject: str) -> bool:
+    """True when the subject's prefix chain includes Fw:/Fwd:."""
+    return bool(_FORWARD_PREFIX.match(subject or ""))
+
+
+def is_reply_or_forward(subject: str) -> bool:
+    """True when the subject carries a Re:/Fw:/Fwd: prefix."""
+    return bool(_RE_PREFIX.match(subject or ""))
+
+
 def normalise_subject(subject: str) -> str:
     """Strip Re:/Fw:/Fwd: prefixes and collapse whitespace (for thread fallback)."""
     return _WS.sub(" ", _RE_PREFIX.sub("", subject or "")).strip()

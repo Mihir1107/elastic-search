@@ -720,3 +720,22 @@ review.
 - **UI.** Preset toggles and custom tags in the reading pane, outlined tag chips on result rows, a
   Review tags filter in Insights (counts labelled as corpus-wide, unlike the other facets), and
   "Tag page" and "Export CSV" in the results header.
+
+## D38 — The serving index is `emails-v3`, rebuilt from the fixed pipeline
+`emails-v2` had drifted from what the pipeline computes. Some of that came from in-place repairs
+(D33, D36). The rest was stale rows from the old embed resume: 462 documents with too-low
+`duplicate_count` and incomplete mailboxes/folders, and 94 stale `thread_id`s. After the ingest
+fixes, parse → embed was re-run over the same 100k-message subset and indexed as `emails-v3`
+(`INDEX_VERSION=v3`). The alias moved only after the stage's count and smoke checks passed.
+
+Verified after the flip: all 52,219 documents are field-for-field identical to the pipeline
+output, including chunk text, with no control bytes. All API tests pass against it.
+`emails-v2` and snapshot `emails-v2-20260921t144454` remain as the rollback: one alias move.
+
+**Eval.** 519 repaired emails have new content-hash ids, so 52 judgments were re-keyed by
+`message_id`, and 7 newly surfaced documents were labelled. Hybrid NDCG@10 is 0.7613 against
+0.7673 on `emails-v2`, each index scored against judgments keyed to its own ids. The per-query
+changes are two-sided (14 down, 14 up, mostly conceptual queries). That fits a rebuilt
+approximate kNN graph and redistributed per-shard BM25 statistics, not a loss: the text is
+unchanged apart from the repairs. The baseline is re-written for `emails-v3`.
+

@@ -309,17 +309,17 @@ each category. Settings are chosen on `tune`; `test` is the number to believe.
 - **MRR** — mean reciprocal rank of first relevant hit
 - **Recall@50** — proportion of known relevant docs in top 50
 
-### Results (52,219 documents, 68 judged queries)
+### Results (`emails-v3`, 52,219 documents, 68 judged queries)
 
 | Method | NDCG@10 | tune | test | MRR |
 |---|---|---|---|---|
-| BM25 | 0.6791 | 0.6830 | 0.6751 | 0.8293 |
-| Vector | 0.6295 | 0.6726 | 0.5865 | 0.8624 |
-| **Hybrid** | **0.7673** | **0.7522** | **0.7824** | **0.9506** |
-| Hybrid + Rerank | 0.7934 | 0.8156 | 0.7713 | 0.9201 |
+| BM25 | 0.6802 | 0.6847 | 0.6756 | 0.8281 |
+| Vector | 0.6326 | 0.6731 | 0.5921 | 0.8630 |
+| **Hybrid** | **0.7613** | **0.7490** | **0.7735** | **0.9430** |
+| Hybrid + Rerank | 0.7936 | 0.8162 | 0.7711 | 0.9208 |
 
 Hybrid beats BM25 in every category but typo and date-scoped, where the gap is ≤0.012. On the
-conceptual queries, where semantic retrieval earns its keep, it scores 0.533 against BM25's 0.359.
+conceptual queries, where semantic retrieval earns its keep, it scores 0.515 against BM25's 0.363.
 Absolute conceptual NDCG is low by construction, because the judgment pools are deep. These
 numbers come after the fixes in DECISIONS D35 (phrase filter on the vector leg, spelling
 correction for the embedder, `minimum_should_match`). Before them, the same queries scored

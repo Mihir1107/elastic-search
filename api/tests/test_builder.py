@@ -94,6 +94,14 @@ def test_best_highlight_ignores_unknown_fields() -> None:
     assert best_highlight({"some.other.field": ["x"]}) == []
 
 
+def test_free_text_is_or_unless_minimum_should_match_is_given() -> None:
+    parsed = parse("california power crisis")
+    plain = build_bm25_query(parsed, [])["bool"]["must"][0]["multi_match"]
+    strict = build_bm25_query(parsed, [], minimum_should_match="2<50%")["bool"]["must"][0]
+    assert "minimum_should_match" not in plain
+    assert strict["multi_match"]["minimum_should_match"] == "2<50%"
+
+
 def test_phrase_filters_require_each_phrase_on_the_exact_subfields() -> None:
     filters = phrase_filters(parse('"force majeure" "credit rating" gas'))
     assert len(filters) == 2

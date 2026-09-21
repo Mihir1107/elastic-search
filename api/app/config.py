@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     knn_num_candidates: int = 200
     #: Embed the spelling-corrected free text rather than the raw typo (D35).
     spell_correct_embedding: bool = True
+    #: ``minimum_should_match`` for the free-text clause (None = plain OR). Plain
+    #: OR let "california power crisis" match anything containing "power", and
+    #: the total and every facet counted that inflated set. "2<50%": one or two
+    #: terms must all match, longer queries need half. Measured on the tune
+    #: split, confirmed on test (D35); the stricter "2<75%" costs conceptual
+    #: queries more than it gains.
+    bm25_minimum_should_match: str | None = "2<50%"
     #: Load the embedding model at startup so the first query is not slow.
     warm_model: bool = True
     #: Load the cross-encoder in a background thread at startup. Its first use

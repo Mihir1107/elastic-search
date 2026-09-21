@@ -163,23 +163,23 @@ def build_bm25_query(
     query: ParsedQuery,
     filters: list[dict[str, Any]],
     fields: list[str] | None = None,
+    minimum_should_match: str | None = None,
 ) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
 
     if query.terms:
-        must.append(
-            {
-                "multi_match": {
-                    "query": query.text,
-                    "fields": fields or BM25_FIELDS,
-                    "type": "best_fields",
-                    # AUTO:5,8 -> exact below 5 chars, then 1 then 2 edits.
-                    "fuzziness": FUZZINESS,
-                    "prefix_length": 1,
-                    "max_expansions": 50,
-                }
-            }
-        )
+        multi_match: dict[str, Any] = {
+            "query": query.text,
+            "fields": fields or BM25_FIELDS,
+            "type": "best_fields",
+            # AUTO:5,8 -> exact below 5 chars, then 1 then 2 edits.
+            "fuzziness": FUZZINESS,
+            "prefix_length": 1,
+            "max_expansions": 50,
+        }
+        if minimum_should_match:
+            multi_match["minimum_should_match"] = minimum_should_match
+        must.append({"multi_match": multi_match})
 
     must.extend(_phrase_clause(phrase, subject_boost=3) for phrase in query.phrases)
 

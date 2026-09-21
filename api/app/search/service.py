@@ -188,7 +188,9 @@ async def run_search(
     if structured is not None:
         # Facet clicks AND with whatever the query string already said.
         filters = filters + build_structured_filters(structured)
-    bm25_query = build_bm25_query(parsed, filters, settings.bm25_fields)
+    bm25_query = build_bm25_query(
+        parsed, filters, settings.bm25_fields, settings.bm25_minimum_should_match
+    )
 
     # No highlighting on the retrieval leg. Fusion needs a wide candidate set,
     # highlighting needs only the page that is actually returned, and the cost

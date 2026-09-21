@@ -18,7 +18,7 @@ import { AttachmentsLens, DatesLens, PeopleLens, TopicsLens } from "./LensPanels
 import { ThemeToggle } from "./ThemeToggle";
 import { TimingNote } from "./TimingNote";
 import type { EmailHit, SearchFilters, SearchResponse } from "@/lib/types";
-import type { View } from "@/lib/useLocal";
+import { useInsightsOpen, type View } from "@/lib/useLocal";
 import { count, plural } from "@/lib/format";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -56,6 +56,7 @@ interface Props {
 
 export function Workspace(p: Props) {
   const { data } = p;
+  const insights = useInsightsOpen();
 
   const lenses: LensCount[] = data
     ? [
@@ -176,6 +177,7 @@ export function Workspace(p: Props) {
               skipReason={data?.warnings.find((w) => w.startsWith("reranking skipped"))}
             />
             {data && <TimingNote timing={data.timing} />}
+            <InsightsToggle on={insights.open} onChange={insights.toggle} />
           </div>
         </div>
 
@@ -187,7 +189,17 @@ export function Workspace(p: Props) {
         )}
 
         {!p.error && (
-          <div className="mt-4 grid gap-5 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_286px]">
+          /* The column gap is carried as padding on the later columns rather than
+             as a grid gap, so hiding insights can take its track all the way
+             to zero and the other two columns grow into the whole width. */
+          <div
+            className={[
+              "mt-4 grid gap-y-5 transition-[grid-template-columns] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]",
+              insights.open
+                ? "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_306px]"
+                : "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_0px]",
+            ].join(" ")}
+          >
             <section className="scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain">
               {p.loading && !data ? (
                 <Skeleton />
@@ -232,7 +244,7 @@ export function Workspace(p: Props) {
             </section>
 
             {/* Reading pane: a column at lg and up, an overlay below. */}
-            <section className="hidden min-w-0 lg:block lg:h-full">
+            <section className="hidden min-w-0 lg:block lg:h-full lg:pl-5">
               <ReadingPane
                 hit={p.open}
                 onClose={() => p.onOpen(null)}
@@ -241,16 +253,27 @@ export function Workspace(p: Props) {
               />
             </section>
 
-            <aside className="scroll-thin hidden min-w-0 overflow-y-auto overscroll-contain xl:block">
+            <aside
+              aria-hidden={!insights.open || undefined}
+              inert={!insights.open || undefined}
+              className={[
+                "scroll-thin hidden min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain transition-opacity duration-200 xl:block",
+                insights.open ? "opacity-100" : "opacity-0",
+              ].join(" ")}
+            >
+              {/* Fixed width, so while the track animates the panel is
+                  uncovered or clipped rather than reflowing at every frame. */}
               {data && (
-                <Insights
-                  facets={data.facets}
-                  filters={p.filters}
-                  total={data.total}
-                  onToggle={p.onToggleFilter}
-                  onRange={p.onRange}
-                  onAttachments={p.onAttachments}
-                />
+                <div className="w-[306px] pl-5">
+                  <Insights
+                    facets={data.facets}
+                    filters={p.filters}
+                    total={data.total}
+                    onToggle={p.onToggleFilter}
+                    onRange={p.onRange}
+                    onAttachments={p.onAttachments}
+                  />
+                </div>
               )}
             </aside>
           </div>
@@ -398,6 +421,30 @@ function RerankToggle({
         aria-hidden
       />
       {skipped ? "Rerank skipped" : "Rerank"}
+    </button>
+  );
+}
+
+/** Shows or hides the insights column. It only exists at xl, so neither does this. */
+function InsightsToggle({ on, onChange }: { on: boolean; onChange: () => void }) {
+  return (
+    <button
+      onClick={onChange}
+      aria-pressed={on}
+      title={on ? "Hide insights to give the email more room" : "Show insights"}
+      className={[
+        "meta hidden shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors xl:flex",
+        on
+          ? "border-[var(--color-rule-strong)] text-[var(--color-ink)]"
+          : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
+      ].join(" ")}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M10.25 2.75v10.5" stroke="currentColor" strokeWidth="1.3" />
+        {on && <rect x="10.25" y="2.75" width="4" height="10.5" rx="0" fill="currentColor" opacity="0.25" />}
+      </svg>
+      Insights
     </button>
   );
 }

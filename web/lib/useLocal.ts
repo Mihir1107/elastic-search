@@ -114,3 +114,23 @@ export function useHistory() {
 
   return { history, record, clear };
 }
+
+const INSIGHTS_KEY = "ledger-insights";
+
+/** Whether the insights column is shown. A per-browser layout preference. */
+export function useInsightsOpen() {
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    setOpen(read<boolean>(INSIGHTS_KEY, true));
+  }, []);
+
+  const toggle = useCallback(() => {
+    setOpen((prev) => {
+      write(INSIGHTS_KEY, !prev);
+      return !prev;
+    });
+  }, []);
+
+  return { open, toggle };
+}

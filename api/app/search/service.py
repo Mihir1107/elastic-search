@@ -71,6 +71,8 @@ _SOURCE_FIELDS = [
     "attachment_names",
     "body",
 ]
+#: What the cross-encoder reads (rerank.document_text).
+_RERANK_FIELDS = ["subject", "body"]
 _FALLBACK_SNIPPET_CHARS = 240
 
 
@@ -150,6 +152,67 @@ def _to_hit(hit: FusedHit) -> SearchHit:
     )
 
 
+async def _hydrate(
+    es: AsyncElasticsearch,
+    settings: Settings,
+    hits: list[FusedHit],
+    *,
+    fields: list[str],
+    preference: str,
+    highlight_query: dict[str, Any] | None = None,
+) -> None:
+    """Load ``fields`` for ``hits``, in place, highlighting keyword matches.
+
+    With ``highlight_query``, documents the keyword leg matched are fetched by
+    an id-filtered search that also highlights them; highlighting costs per
+    document, so it is never spent on semantic-only hits, which keep their
+    chunk snippet. Everything else is a plain multi-get. The two run
+    concurrently, so hydration costs the slower of them, not the sum.
+    """
+    keyword = [h for h in hits if highlight_query is not None and "bm25" in h.ranks]
+    keyword_ids = {h.doc_id for h in keyword}
+    plain = [h for h in hits if h.doc_id not in keyword_ids]
+
+    async def highlighted() -> list[dict[str, Any]]:
+        if not keyword:
+            return []
+        response = await es.search(
+            index=settings.emails_alias,
+            query={
+                "bool": {
+                    "must": [highlight_query],
+                    "filter": [{"ids": {"values": [h.doc_id for h in keyword]}}],
+                }
+            },
+            size=len(keyword),
+            source={"includes": fields},
+            highlight=HIGHLIGHT,
+            preference=preference,
+        )
+        return list(response["hits"]["hits"])
+
+    async def fetched() -> list[dict[str, Any]]:
+        if not plain:
+            return []
+        response = await es.mget(
+            index=settings.emails_alias,
+            ids=[h.doc_id for h in plain],
+            source_includes=fields,
+            preference=preference,
+        )
+        return [d for d in response["docs"] if d.get("found")]
+
+    found = [doc for docs in await asyncio.gather(highlighted(), fetched()) for doc in docs]
+    loaded = {doc["_id"]: doc for doc in found}
+    for hit in hits:
+        doc = loaded.get(hit.doc_id)
+        if doc is None:
+            continue
+        hit.source = {**hit.source, **(doc.get("_source") or {})}
+        if doc.get("highlight"):
+            hit.highlight = doc["highlight"]
+
+
 async def run_search(
     es: AsyncElasticsearch,
     settings: Settings,
@@ -192,15 +255,16 @@ async def run_search(
         parsed, filters, settings.bm25_fields, settings.bm25_minimum_should_match
     )
 
-    # No highlighting on the retrieval leg. Fusion needs a wide candidate set,
-    # highlighting needs only the page that is actually returned, and the cost
-    # of highlighting is per document: measured on this corpus at size 200 it is
-    # 8.6ms without and 158.8ms with. So the window is fetched bare and the page
-    # is highlighted by a second, id-filtered query below.
+    # No highlighting and no documents on the retrieval legs. Fusion needs a
+    # wide candidate set, but only ids and ranks; the page is what gets shown.
+    # Highlighting is per document (measured at size 200: 8.6ms without, 158.8ms
+    # with), and so is _source: bodies made each leg's response ~380KB for the
+    # ~20 documents a page uses (D35). So the window is fetched bare and the page
+    # is hydrated and highlighted by a second, id-filtered query below.
     request: dict[str, Any] = {
         "query": bm25_query,
         "size": window,
-        "_source": {"includes": _SOURCE_FIELDS},
+        "_source": False,
         "aggs": facets_mod.build_aggs(),
         "track_total_hits": True,
     }
@@ -253,7 +317,7 @@ async def run_search(
                 vector, filters + phrase_filters(parsed), window, settings.knn_num_candidates
             ),
             size=window,
-            source={"includes": _SOURCE_FIELDS},
+            source=False,
             preference=preference,
         )
         timings.knn_ms = round((perf_counter() - t0) * 1000, 2)
@@ -278,6 +342,15 @@ async def run_search(
         )
     if use_rerank and semantic_text and fused:
         t0 = perf_counter()
+        # The cross-encoder reads subject and body, which retrieval no longer
+        # fetches; loading them is part of what reranking costs.
+        await _hydrate(
+            es,
+            settings,
+            fused[: settings.rerank_window],
+            fields=_RERANK_FIELDS,
+            preference=preference,
+        )
         # Same reasoning as the embedder: the cross-encoder is heavier still.
         fused = await asyncio.to_thread(
             rerank_hits,
@@ -290,23 +363,16 @@ async def run_search(
 
     page = fused[offset : offset + page_size]
 
-    # Highlight exactly the page. Only documents the keyword leg matched can
-    # carry keyword highlights; a semantic-only hit keeps its chunk snippet.
-    highlight_ids = [hit.doc_id for hit in page if "bm25" in hit.ranks]
-    if highlight_ids:
+    if page:
         t0 = perf_counter()
-        highlight_response = await es.search(
-            index=settings.emails_alias,
-            query={"bool": {"must": [bm25_query], "filter": [{"ids": {"values": highlight_ids}}]}},
-            size=len(highlight_ids),
-            source=False,
-            highlight=HIGHLIGHT,
+        await _hydrate(
+            es,
+            settings,
+            page,
+            fields=_SOURCE_FIELDS,
             preference=preference,
+            highlight_query=bm25_query if parsed.has_text else None,
         )
-        fragments = {h["_id"]: h.get("highlight") or {} for h in highlight_response["hits"]["hits"]}
-        for hit in page:
-            if hit.doc_id in fragments:
-                hit.highlight = fragments[hit.doc_id]
         timings.highlight_ms = round((perf_counter() - t0) * 1000, 2)
 
     next_token = (

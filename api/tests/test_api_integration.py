@@ -377,3 +377,11 @@ def test_real_words_are_never_corrected(client: TestClient) -> None:
     for q in ("complaints that the new software keeps crashing", "hiding financial losses"):
         body = client.get("/search", params={"q": q, "size": 5}).json()
         assert body["understood"]["corrections"] == [], q
+
+
+def test_every_hit_is_hydrated_with_its_document_fields(client: TestClient) -> None:
+    body = client.get("/search", params={"q": "gas pipeline capacity", "size": 20}).json()
+    assert body["hits"]
+    for hit in body["hits"]:
+        assert hit["message_id"] and hit["date"] and hit["from"]
+        assert hit["snippets"], hit["id"]

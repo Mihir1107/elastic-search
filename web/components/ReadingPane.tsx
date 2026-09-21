@@ -127,7 +127,7 @@ export function ReadingPane({
         </div>
       </header>
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
         {!error && tab === "message" && <Message doc={doc} />}
         {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}

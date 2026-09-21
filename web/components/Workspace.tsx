@@ -72,8 +72,11 @@ export function Workspace(p: Props) {
     : [];
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-[var(--color-rule)] bg-[color-mix(in_srgb,var(--color-app)_90%,transparent)] px-5 py-3 backdrop-blur-md">
+    /* At lg and up the workspace is exactly one viewport tall and never scrolls
+       itself: the header, title and tabs stay put, and each column below them
+       scrolls on its own, so the wheel moves whatever is under the cursor. */
+    <div className="flex min-h-dvh flex-col lg:h-dvh lg:overflow-hidden">
+      <header className="sticky top-0 z-30 flex shrink-0 items-center gap-4 border-b border-[var(--color-rule)] bg-[color-mix(in_srgb,var(--color-app)_90%,transparent)] px-5 py-3 backdrop-blur-md">
         <motion.div layoutId="search-pill" className="mx-auto w-full max-w-xl">
           <SearchPill
             value={p.draft}
@@ -96,7 +99,7 @@ export function Workspace(p: Props) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1600px] flex-1 px-5 py-6 sm:px-7">
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-5 py-6 sm:px-7 lg:flex lg:min-h-0 lg:flex-col lg:pt-4 lg:pb-5">
         {/* The sidebar is hidden below lg, so its destinations live here. */}
         <nav className="mb-4 flex items-center gap-0.5 lg:hidden">
           {(
@@ -125,9 +128,13 @@ export function Workspace(p: Props) {
           ))}
         </nav>
 
-        <div className="flex items-start justify-between gap-6">
-          <div className="min-w-0">
-            <p className="meta">
+        {/* One row for the lenses and the result line. The query itself is
+            already in the search pill, so it is not repeated at display size:
+            every pixel here comes out of the reading pane's height. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          {data && <Tabs lenses={lenses} active={p.lens} onChange={p.onLens} />}
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            <h1 className="meta min-w-0 truncate font-normal" title={p.committed || p.draft}>
               {/* The count crossfades instead of snapping, so a facet click
                   reads as the same number changing rather than a new page. */}
               <AnimatePresence mode="wait" initial={false}>
@@ -141,30 +148,22 @@ export function Workspace(p: Props) {
                 >
                   {data ? `${plural(data.total, "result")} for` : "Searching"}
                 </motion.span>
-              </AnimatePresence>
-            </p>
-            <h1 className="mt-0.5 font-serif text-[clamp(1.5rem,1.1rem+1.4vw,2.2rem)] leading-tight tracking-[-0.02em]">
-              <span className="text-[var(--color-faint)]">&ldquo;</span>
-              {p.committed || p.draft}
-              <span className="text-[var(--color-faint)]">&rdquo;</span>
+              </AnimatePresence>{" "}
+              <span className="font-serif text-[var(--color-ink)]">
+                &ldquo;{p.committed || p.draft}&rdquo;
+              </span>
             </h1>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
+            {p.filterCount > 0 && (
+              <button
+                onClick={p.onClearFilters}
+                className="meta shrink-0 rounded-full border border-[var(--color-rule)] px-3 py-1 transition-colors hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]"
+              >
+                Clear {plural(p.filterCount, "filter")}
+              </button>
+            )}
             <RerankToggle on={p.rerank} onChange={p.onRerank} />
             {data && <TimingNote timing={data.timing} />}
           </div>
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-          {data && <Tabs lenses={lenses} active={p.lens} onChange={p.onLens} />}
-          {p.filterCount > 0 && (
-            <button
-              onClick={p.onClearFilters}
-              className="meta rounded-full border border-[var(--color-rule)] px-3 py-1 transition-colors hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]"
-            >
-              Clear {plural(p.filterCount, "filter")}
-            </button>
-          )}
         </div>
 
         {p.error && (
@@ -175,8 +174,8 @@ export function Workspace(p: Props) {
         )}
 
         {!p.error && (
-          <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_286px]">
-            <section className="min-w-0">
+          <div className="mt-4 grid gap-5 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_286px]">
+            <section className="scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain">
               {p.loading && !data ? (
                 <Skeleton />
               ) : !data ? null : p.lens === "emails" ? (
@@ -220,29 +219,25 @@ export function Workspace(p: Props) {
             </section>
 
             {/* Reading pane: a column at lg and up, an overlay below. */}
-            <section className="hidden min-w-0 lg:block">
-              <div className="sticky top-[84px] max-h-[calc(100dvh-108px)]">
-                <ReadingPane
-                  hit={p.open}
-                  onClose={() => p.onOpen(null)}
-                  saved={p.open ? p.isSaved(p.open.id) : false}
-                  onToggleSave={() => p.open && p.onToggleSave(p.open)}
-                />
-              </div>
+            <section className="hidden min-w-0 lg:block lg:h-full">
+              <ReadingPane
+                hit={p.open}
+                onClose={() => p.onOpen(null)}
+                saved={p.open ? p.isSaved(p.open.id) : false}
+                onToggleSave={() => p.open && p.onToggleSave(p.open)}
+              />
             </section>
 
-            <aside className="hidden min-w-0 xl:block">
+            <aside className="scroll-thin hidden min-w-0 overflow-y-auto overscroll-contain xl:block">
               {data && (
-                <div className="sticky top-[84px]">
-                  <Insights
-                    facets={data.facets}
-                    filters={p.filters}
-                    total={data.total}
-                    onToggle={p.onToggleFilter}
-                    onRange={p.onRange}
-                    onAttachments={p.onAttachments}
-                  />
-                </div>
+                <Insights
+                  facets={data.facets}
+                  filters={p.filters}
+                  total={data.total}
+                  onToggle={p.onToggleFilter}
+                  onRange={p.onRange}
+                  onAttachments={p.onAttachments}
+                />
               )}
             </aside>
           </div>

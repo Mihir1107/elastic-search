@@ -18,6 +18,7 @@ def render_report(
     per_category: Mapping[str, Mapping[str, Mapping[str, float]]],
     coverage: Mapping[str, Any],
     queries: Sequence[Mapping[str, Any]],
+    per_split: Mapping[str, Mapping[str, Mapping[str, float]]] | None = None,
 ) -> str:
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = [
@@ -31,15 +32,19 @@ def render_report(
         f"({', '.join(f'{k} {v}' for k, v in sorted(coverage['by_category'].items()))})",
         f"- Judged queries: **{coverage['judged_queries']}**"
         f" (auto-graded by rule: {coverage['auto_queries']},"
-        f" human-labelled: {coverage['human_queries']})",
+        f" human-labelled: {coverage['human_queries']},"
+        f" LLM-labelled: {coverage.get('llm_queries', 0)})",
         f"- Unjudged queries: **{coverage['unjudged_queries']}**"
         " — excluded from the means below, never scored as zero",
         f"- Judgments: {coverage['judgments']}"
-        f" ({coverage['auto_judgments']} auto, {coverage['human_judgments']} human)",
+        f" ({coverage['auto_judgments']} auto, {coverage['human_judgments']} human,"
+        f" {coverage.get('llm_judgments', 0)} LLM)",
         "",
         "Auto-graded judgments come from objective rules (a required phrase, sender or date",
-        "window) declared alongside each query. Conceptual queries carry no rule and need a",
-        "human; until they are labelled they are simply absent from the numbers.",
+        "window) declared alongside each query. Conceptual queries carry no rule. Their",
+        "labels are LLM judgments on the 0-3 rubric in `eval/prelabel.py`, recorded with",
+        'source `"llm"`: provisional until a human reviews them (`make eval-label` offers',
+        "each one with the LLM grade as the default, and a human answer replaces it).",
         "",
         "## Results",
         "",
@@ -49,6 +54,25 @@ def render_report(
     for method, metrics in results.items():
         row = " | ".join(_fmt(float(metrics.get(m, 0.0))) for m in METRIC_ORDER)
         lines.append(f"| {method} | {row} | {int(metrics.get('queries', 0))} |")
+
+    if per_split:
+        lines += [
+            "",
+            "## Tune / test split (NDCG@10)",
+            "",
+            "Queries alternate between `tune` and `test` within each category. Settings are",
+            "chosen on `tune`; `test` is the number to believe, because nothing was fitted",
+            "to it.",
+            "",
+            "| method | tune | test |",
+            "|---|---|---|",
+        ]
+        for method, splits in per_split.items():
+            cells = [
+                _fmt(float(splits[s]["ndcg@10"])) if splits.get(s, {}).get("queries") else "--"
+                for s in ("tune", "test")
+            ]
+            lines.append(f"| {method} | " + " | ".join(cells) + " |")
 
     lines += [
         "",
@@ -82,13 +106,14 @@ def render_report(
         "MRR as the meaningful comparison; use recall only between methods, never as an",
         "absolute.",
         "",
-        "**The judged subset skews lexical.** Objective rules only exist where relevance is",
-        "derivable from the document -- an exact phrase, a sender, a date window. Those are",
-        "precisely the queries keyword matching is good at, while the 12 conceptual queries,",
-        "where semantic retrieval is supposed to earn its keep, are the ones still awaiting",
-        "human labels. The vector leg is therefore being judged mostly on the terrain that",
-        "suits it least, and its standing should be expected to improve once the conceptual",
-        "queries are labelled.",
+        "**Conceptual NDCG is low in absolute terms, by construction.** Their pools are deep",
+        "(the top 10 of every variant compared in D35, 30-45 documents per query), so the",
+        "ideal ranking holds far more relevant documents than fit in a top 10. Compare methods",
+        "against each other, not against 1.0.",
+        "",
+        "**Conceptual labels are one LLM's judgment.** Consistent, but not a human's; a",
+        "method that shares the labeller's biases could be flattered. The rule-graded",
+        "categories carry no such risk and tell the same story.",
     ]
     lines += ["", "## Query set", "", "| id | category | query | judged |", "|---|---|---|---|"]
     judged_ids = set(coverage["judged_ids"])

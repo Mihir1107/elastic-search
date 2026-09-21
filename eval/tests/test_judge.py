@@ -141,3 +141,17 @@ def test_load_qrels_shapes_the_mapping_metrics_expect(tmp_path: Path) -> None:
 def test_missing_qrels_file_is_empty(tmp_path: Path) -> None:
     assert load_qrels(tmp_path / "nope.jsonl") == {}
     assert load_judgments(tmp_path / "nope.jsonl") == []
+
+
+def test_a_human_label_beats_an_llm_label_which_beats_a_rule(tmp_path: Path) -> None:
+    path = tmp_path / "qrels.jsonl"
+    save_judgments(
+        path,
+        [
+            Judgment("q1", "d1", 0, "auto:phrase"),
+            Judgment("q1", "d1", 2, "llm"),
+            Judgment("q1", "d2", 3, "human"),
+            Judgment("q1", "d2", 1, "llm"),
+        ],
+    )
+    assert load_qrels(path) == {"q1": {"d1": 2, "d2": 3}}

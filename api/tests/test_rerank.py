@@ -104,3 +104,20 @@ def test_ties_break_deterministically(monkeypatch: pytest.MonkeyPatch) -> None:
     hits2 = [_hit("z", "a", 1.0), _hit("y", "b", 2.0)]
     second = [h.doc_id for h in rerank_mod.rerank("q", hits2, "m", window=5)]
     assert first == second == ["y", "z"]
+
+
+def test_the_model_cache_is_keyed_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+
+    class _Model:
+        def __init__(self, name: str, **_: Any) -> None:
+            self.name = name
+
+    fake_module = types.ModuleType("sentence_transformers")
+    fake_module.CrossEncoder = _Model  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+
+    first = rerank_mod.get_reranker("model-a")
+    assert rerank_mod.get_reranker("model-a") is first
+    assert rerank_mod.get_reranker("model-b").name == "model-b"

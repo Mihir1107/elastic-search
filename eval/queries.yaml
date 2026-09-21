@@ -1,6 +1,8 @@
 # Ledger relevance evaluation query set.
 #
 # category: exact-lookup | person-topic | date-scoped | conceptual | typo
+# split:    tune | test -- alternating within each category. Tune settings on
+#           `tune` only; report `test`. Tuning and reporting on one set overfits.
 #
 # `auto` attaches an objective grading rule, used where relevance is derivable
 # from the document itself rather than a matter of opinion:
@@ -13,61 +15,80 @@ version: 1
 queries:
 
 # ---------------------------------------------------------------- exact lookup
-- {id: q01, category: exact-lookup, query: '"rolling blackouts"', intent: Emails that literally discuss rolling blackouts., auto: {kind: phrase, phrase: rolling blackouts}}
-- {id: q02, category: exact-lookup, query: '"force majeure"', intent: Contractual force majeure declarations., auto: {kind: phrase, phrase: force majeure}}
-- {id: q03, category: exact-lookup, query: '"day ahead schedule"', intent: References to the day ahead schedule., auto: {kind: phrase, phrase: day ahead schedule}}
-- {id: q04, category: exact-lookup, query: '"real time desk"', intent: Mentions of the real time desk., auto: {kind: phrase, phrase: real time desk}}
-- {id: q05, category: exact-lookup, query: '"credit rating"', intent: Discussion of credit ratings., auto: {kind: phrase, phrase: credit rating}}
-- {id: q06, category: exact-lookup, query: '"power outage"', intent: Reports of a power outage., auto: {kind: phrase, phrase: power outage}}
-- {id: q07, category: exact-lookup, query: '"out of the office"', intent: Out-of-office notices., auto: {kind: phrase, phrase: out of the office}}
-- {id: q08, category: exact-lookup, query: '"conference call"', intent: Arrangements for a conference call., auto: {kind: phrase, phrase: conference call}}
-- {id: q09, category: exact-lookup, query: '"natural gas"', intent: Natural gas discussion., auto: {kind: phrase, phrase: natural gas}}
-- {id: q10, category: exact-lookup, query: 'subject:"Schedule Crawler"', intent: The automated Schedule Crawler alerts., auto: {kind: phrase, phrase: schedule crawler}}
+- {id: q01, category: exact-lookup, split: tune, query: '"rolling blackouts"', intent: Emails that literally discuss rolling blackouts., auto: {kind: phrase, phrase: rolling blackouts}}
+- {id: q02, category: exact-lookup, split: test, query: '"force majeure"', intent: Contractual force majeure declarations., auto: {kind: phrase, phrase: force majeure}}
+- {id: q03, category: exact-lookup, split: tune, query: '"day ahead schedule"', intent: References to the day ahead schedule., auto: {kind: phrase, phrase: day ahead schedule}}
+- {id: q04, category: exact-lookup, split: test, query: '"real time desk"', intent: Mentions of the real time desk., auto: {kind: phrase, phrase: real time desk}}
+- {id: q05, category: exact-lookup, split: tune, query: '"credit rating"', intent: Discussion of credit ratings., auto: {kind: phrase, phrase: credit rating}}
+- {id: q06, category: exact-lookup, split: test, query: '"power outage"', intent: Reports of a power outage., auto: {kind: phrase, phrase: power outage}}
+- {id: q07, category: exact-lookup, split: tune, query: '"out of the office"', intent: Out-of-office notices., auto: {kind: phrase, phrase: out of the office}}
+- {id: q08, category: exact-lookup, split: test, query: '"conference call"', intent: Arrangements for a conference call., auto: {kind: phrase, phrase: conference call}}
+- {id: q09, category: exact-lookup, split: tune, query: '"natural gas"', intent: Natural gas discussion., auto: {kind: phrase, phrase: natural gas}}
+- {id: q10, category: exact-lookup, split: test, query: 'subject:"Schedule Crawler"', intent: The automated Schedule Crawler alerts., auto: {kind: phrase, phrase: schedule crawler}}
 
 # ---------------------------------------------------------------- person+topic
-- {id: q11, category: person-topic, query: 'from:john.arnold@enron.com gas', intent: What John Arnold said about gas., auto: {kind: both, from: john.arnold@enron.com, terms: [gas]}}
-- {id: q12, category: person-topic, query: 'from:bill.williams@enron.com schedule', intent: Bill Williams on scheduling., auto: {kind: both, from: bill.williams@enron.com, terms: [schedule]}}
-- {id: q13, category: person-topic, query: 'from:kate.symes@enron.com deal', intent: Kate Symes on deals., auto: {kind: both, from: kate.symes@enron.com, terms: [deal]}}
-- {id: q14, category: person-topic, query: 'from:geoff.storey@enron.com gas', intent: Geoff Storey on gas., auto: {kind: both, from: geoff.storey@enron.com, terms: [gas]}}
-- {id: q15, category: person-topic, query: 'from:m..forney@enron.com california', intent: Forney on California., auto: {kind: both, from: m..forney@enron.com, terms: [california]}}
-- {id: q16, category: person-topic, query: 'from:pete.davis@enron.com hourahead', intent: Pete Davis hour-ahead scheduling traffic., auto: {kind: both, from: pete.davis@enron.com, terms: [hourahead]}}
-- {id: q17, category: person-topic, query: 'from:john.arnold@enron.com position', intent: Arnold discussing positions., auto: {kind: both, from: john.arnold@enron.com, terms: [position]}}
-- {id: q18, category: person-topic, query: 'from:bill.williams@enron.com outage', intent: Williams on outages., auto: {kind: both, from: bill.williams@enron.com, terms: [outage]}}
-- {id: q19, category: person-topic, query: 'to:john.arnold@enron.com market', intent: Mail sent to Arnold about the market., auto: {kind: both, to: john.arnold@enron.com, terms: [market]}}
-- {id: q20, category: person-topic, query: 'from:grace.rodriguez@enron.com interview', intent: Rodriguez on interviews/recruiting., auto: {kind: both, from: grace.rodriguez@enron.com, terms: [interview]}}
-- {id: q21, category: person-topic, query: 'from:joe.quenet@enron.com trading', intent: Quenet on trading., auto: {kind: both, from: joe.quenet@enron.com, terms: [trading]}}
-- {id: q22, category: person-topic, query: 'from:kysa.alport@enron.com report', intent: Alport circulating reports., auto: {kind: both, from: kysa.alport@enron.com, terms: [report]}}
+- {id: q11, category: person-topic, split: tune, query: 'from:john.arnold@enron.com gas', intent: What John Arnold said about gas., auto: {kind: both, from: john.arnold@enron.com, terms: [gas]}}
+- {id: q12, category: person-topic, split: test, query: 'from:bill.williams@enron.com schedule', intent: Bill Williams on scheduling., auto: {kind: both, from: bill.williams@enron.com, terms: [schedule]}}
+- {id: q13, category: person-topic, split: tune, query: 'from:kate.symes@enron.com deal', intent: Kate Symes on deals., auto: {kind: both, from: kate.symes@enron.com, terms: [deal]}}
+- {id: q14, category: person-topic, split: test, query: 'from:geoff.storey@enron.com gas', intent: Geoff Storey on gas., auto: {kind: both, from: geoff.storey@enron.com, terms: [gas]}}
+- {id: q15, category: person-topic, split: tune, query: 'from:m..forney@enron.com california', intent: Forney on California., auto: {kind: both, from: m..forney@enron.com, terms: [california]}}
+- {id: q16, category: person-topic, split: test, query: 'from:pete.davis@enron.com hourahead', intent: Pete Davis hour-ahead scheduling traffic., auto: {kind: both, from: pete.davis@enron.com, terms: [hourahead]}}
+- {id: q17, category: person-topic, split: tune, query: 'from:john.arnold@enron.com position', intent: Arnold discussing positions., auto: {kind: both, from: john.arnold@enron.com, terms: [position]}}
+- {id: q18, category: person-topic, split: test, query: 'from:bill.williams@enron.com outage', intent: Williams on outages., auto: {kind: both, from: bill.williams@enron.com, terms: [outage]}}
+- {id: q19, category: person-topic, split: tune, query: 'to:john.arnold@enron.com market', intent: Mail sent to Arnold about the market., auto: {kind: both, to: john.arnold@enron.com, terms: [market]}}
+- {id: q20, category: person-topic, split: test, query: 'from:grace.rodriguez@enron.com interview', intent: Rodriguez on interviews/recruiting., auto: {kind: both, from: grace.rodriguez@enron.com, terms: [interview]}}
+- {id: q21, category: person-topic, split: tune, query: 'from:joe.quenet@enron.com trading', intent: Quenet on trading., auto: {kind: both, from: joe.quenet@enron.com, terms: [trading]}}
+- {id: q22, category: person-topic, split: test, query: 'from:kysa.alport@enron.com report', intent: Alport circulating reports., auto: {kind: both, from: kysa.alport@enron.com, terms: [report]}}
 
 # ---------------------------------------------------------------- date scoped
-- {id: q23, category: date-scoped, query: 'from:john.arnold@enron.com after:2001-06-01 before:2001-09-30', intent: Everything Arnold sent in Q3 2001., auto: {kind: filter, from: john.arnold@enron.com, after: '2001-06-01', before: '2001-09-30'}}
-- {id: q24, category: date-scoped, query: 'california after:2001-01-01 before:2001-03-31', intent: California talk in the Q1 2001 crisis., auto: {kind: both, after: '2001-01-01', before: '2001-03-31', terms: [california]}}
-- {id: q25, category: date-scoped, query: 'from:bill.williams@enron.com after:2001-10-01 before:2001-12-31', intent: Williams in Q4 2001., auto: {kind: filter, from: bill.williams@enron.com, after: '2001-10-01', before: '2001-12-31'}}
-- {id: q26, category: date-scoped, query: 'outage after:2001-05-01 before:2001-08-31', intent: Outages over the summer of 2001., auto: {kind: both, after: '2001-05-01', before: '2001-08-31', terms: [outage]}}
-- {id: q27, category: date-scoped, query: 'after:2001-12-01 before:2001-12-31 schedule', intent: Scheduling traffic in December 2001., auto: {kind: both, after: '2001-12-01', before: '2001-12-31', terms: [schedule]}}
-- {id: q28, category: date-scoped, query: 'from:m..forney@enron.com after:2001-01-01 before:2001-12-31', intent: All of Forney during 2001., auto: {kind: filter, from: m..forney@enron.com, after: '2001-01-01', before: '2001-12-31'}}
-- {id: q29, category: date-scoped, query: 'credit after:2001-09-01 before:2001-12-31', intent: Credit worries in the final quarter., auto: {kind: both, after: '2001-09-01', before: '2001-12-31', terms: [credit]}}
-- {id: q30, category: date-scoped, query: 'from:geoff.storey@enron.com after:2001-03-01 before:2001-06-30', intent: Storey in spring 2001., auto: {kind: filter, from: geoff.storey@enron.com, after: '2001-03-01', before: '2001-06-30'}}
+- {id: q23, category: date-scoped, split: tune, query: 'from:john.arnold@enron.com after:2001-06-01 before:2001-09-30', intent: Everything Arnold sent in Q3 2001., auto: {kind: filter, from: john.arnold@enron.com, after: '2001-06-01', before: '2001-09-30'}}
+- {id: q24, category: date-scoped, split: test, query: 'california after:2001-01-01 before:2001-03-31', intent: California talk in the Q1 2001 crisis., auto: {kind: both, after: '2001-01-01', before: '2001-03-31', terms: [california]}}
+- {id: q25, category: date-scoped, split: tune, query: 'from:bill.williams@enron.com after:2001-10-01 before:2001-12-31', intent: Williams in Q4 2001., auto: {kind: filter, from: bill.williams@enron.com, after: '2001-10-01', before: '2001-12-31'}}
+- {id: q26, category: date-scoped, split: test, query: 'outage after:2001-05-01 before:2001-08-31', intent: Outages over the summer of 2001., auto: {kind: both, after: '2001-05-01', before: '2001-08-31', terms: [outage]}}
+- {id: q27, category: date-scoped, split: tune, query: 'after:2001-12-01 before:2001-12-31 schedule', intent: Scheduling traffic in December 2001., auto: {kind: both, after: '2001-12-01', before: '2001-12-31', terms: [schedule]}}
+- {id: q28, category: date-scoped, split: test, query: 'from:m..forney@enron.com after:2001-01-01 before:2001-12-31', intent: All of Forney during 2001., auto: {kind: filter, from: m..forney@enron.com, after: '2001-01-01', before: '2001-12-31'}}
+- {id: q29, category: date-scoped, split: tune, query: 'credit after:2001-09-01 before:2001-12-31', intent: Credit worries in the final quarter., auto: {kind: both, after: '2001-09-01', before: '2001-12-31', terms: [credit]}}
+- {id: q30, category: date-scoped, split: test, query: 'from:geoff.storey@enron.com after:2001-03-01 before:2001-06-30', intent: Storey in spring 2001., auto: {kind: filter, from: geoff.storey@enron.com, after: '2001-03-01', before: '2001-06-30'}}
 
 # ---------------------------------------------------------------- conceptual
-- {id: q31, category: conceptual, query: concerns about hiding financial losses, intent: Anxiety about losses being concealed or restated.}
-- {id: q32, category: conceptual, query: worries the company might be downgraded, intent: Fear of a credit downgrade., }
-- {id: q33, category: conceptual, query: keeping the lights on in California, intent: Keeping California supplied during the crisis.}
-- {id: q34, category: conceptual, query: someone is leaving the company, intent: Departures, resignations, goodbyes.}
-- {id: q35, category: conceptual, query: the overnight scheduling system broke, intent: Automated scheduling failures overnight.}
-- {id: q36, category: conceptual, query: regulators looking into market manipulation, intent: FERC/ISO scrutiny of market behaviour.}
-- {id: q37, category: conceptual, query: arranging to meet up for dinner, intent: Social plans between colleagues.}
-- {id: q38, category: conceptual, query: taking time off work, intent: Vacation, leave, out of office.}
-- {id: q39, category: conceptual, query: a counterparty has not paid us, intent: Payment disputes and receivables.}
-- {id: q40, category: conceptual, query: risk of shortages during hot weather, intent: Demand spikes and supply risk in heat.}
-- {id: q41, category: conceptual, query: a very profitable day on the desk, intent: Traders reporting strong P&L.}
-- {id: q42, category: conceptual, query: moving power across the transmission grid, intent: Transmission, paths, congestion.}
+- {id: q31, category: conceptual, split: tune, query: concerns about hiding financial losses, intent: Anxiety about losses being concealed or restated.}
+- {id: q32, category: conceptual, split: test, query: worries the company might be downgraded, intent: Fear of a credit downgrade., }
+- {id: q33, category: conceptual, split: tune, query: keeping the lights on in California, intent: Keeping California supplied during the crisis.}
+- {id: q34, category: conceptual, split: test, query: someone is leaving the company, intent: Departures, resignations, goodbyes.}
+- {id: q35, category: conceptual, split: tune, query: the overnight scheduling system broke, intent: Automated scheduling failures overnight.}
+- {id: q36, category: conceptual, split: test, query: regulators looking into market manipulation, intent: FERC/ISO scrutiny of market behaviour.}
+- {id: q37, category: conceptual, split: tune, query: arranging to meet up for dinner, intent: Social plans between colleagues.}
+- {id: q38, category: conceptual, split: test, query: taking time off work, intent: Vacation, leave, out of office.}
+- {id: q39, category: conceptual, split: tune, query: a counterparty has not paid us, intent: Payment disputes and receivables.}
+- {id: q40, category: conceptual, split: test, query: risk of shortages during hot weather, intent: Demand spikes and supply risk in heat.}
+- {id: q41, category: conceptual, split: tune, query: a very profitable day on the desk, intent: Traders reporting strong P&L.}
+- {id: q42, category: conceptual, split: test, query: moving power across the transmission grid, intent: Transmission, paths, congestion.}
+
+- {id: q51, category: conceptual, split: tune, query: employees worried about their retirement savings, intent: Fear about 401k or pension losses in Enron stock.}
+- {id: q52, category: conceptual, split: test, query: complaints that the new software keeps crashing, intent: Frustration with a system or application failing.}
+- {id: q53, category: conceptual, split: tune, query: negotiating year end bonuses, intent: Discussion of bonus or compensation amounts.}
+- {id: q54, category: conceptual, split: test, query: people being laid off, intent: Layoffs, job cuts, terminations.}
+- {id: q55, category: conceptual, split: tune, query: gas prices spiking in a cold winter, intent: Natural gas price jumps driven by cold weather.}
+- {id: q56, category: conceptual, split: test, query: asking a lawyer to review a contract, intent: Requests for legal review of agreements.}
+- {id: q57, category: conceptual, split: tune, query: congratulating a colleague on a promotion, intent: Congratulations on a new role or promotion.}
+- {id: q58, category: conceptual, split: test, query: the weather forecast is moving the market, intent: Weather outlooks driving prices or trading.}
+- {id: q59, category: conceptual, split: tune, query: interviewing candidates for an analyst role, intent: Recruiting, interviews, hiring decisions.}
+- {id: q60, category: conceptual, split: test, query: doubts about the accounting for off balance sheet deals, intent: Concerns over partnership or off-balance-sheet accounting.}
+- {id: q61, category: conceptual, split: tune, query: fantasy football league with coworkers, intent: Office fantasy football and sports pools.}
+- {id: q62, category: conceptual, split: test, query: the share price keeps falling, intent: Enron stock declining and reactions to it.}
+- {id: q63, category: conceptual, split: tune, query: a power plant tripped offline unexpectedly, intent: Unplanned generation outages.}
+- {id: q64, category: conceptual, split: test, query: planning the office holiday party, intent: Organising a holiday or Christmas party.}
+- {id: q65, category: conceptual, split: tune, query: booking flights and hotels for a business trip, intent: Travel arrangements.}
+- {id: q66, category: conceptual, split: test, query: frustration with a manager's decision, intent: Disagreement or complaints about a boss.}
+- {id: q67, category: conceptual, split: tune, query: getting reimbursed for expenses, intent: Expense reports and reimbursement.}
+- {id: q68, category: conceptual, split: test, query: what happens to us after the bankruptcy filing, intent: Uncertainty after Enron's Chapter 11 filing.}
 
 # ---------------------------------------------------------------- typo'd
-- {id: q43, category: typo, query: califronia energy crisis, intent: Typo of "california energy crisis"., auto: {kind: terms, terms: [california]}}
-- {id: q44, category: typo, query: naturl gas pipeline, intent: Typo of "natural gas pipeline"., auto: {kind: terms, terms: [gas, pipeline]}}
-- {id: q45, category: typo, query: scheduel crawler failure, intent: Typo of "schedule crawler failure"., auto: {kind: phrase, phrase: schedule crawler}}
-- {id: q46, category: typo, query: transmision outage, intent: Typo of "transmission outage"., auto: {kind: terms, terms: [transmission]}}
-- {id: q47, category: typo, query: counterparty setlement, intent: Typo of "counterparty settlement"., auto: {kind: terms, terms: [settlement]}}
-- {id: q48, category: typo, query: megawat hours, intent: Typo of "megawatt hours"., auto: {kind: terms, terms: [megawatt]}}
-- {id: q49, category: typo, query: confrence call tomorrow, intent: Typo of "conference call tomorrow"., auto: {kind: phrase, phrase: conference call}}
-- {id: q50, category: typo, query: volatilty in the market, intent: Typo of "volatility in the market"., auto: {kind: terms, terms: [volatility]}}
+- {id: q43, category: typo, split: tune, query: califronia energy crisis, intent: Typo of "california energy crisis"., auto: {kind: terms, terms: [california]}}
+- {id: q44, category: typo, split: test, query: naturl gas pipeline, intent: Typo of "natural gas pipeline"., auto: {kind: terms, terms: [gas, pipeline]}}
+- {id: q45, category: typo, split: tune, query: scheduel crawler failure, intent: Typo of "schedule crawler failure"., auto: {kind: phrase, phrase: schedule crawler}}
+- {id: q46, category: typo, split: test, query: transmision outage, intent: Typo of "transmission outage"., auto: {kind: terms, terms: [transmission]}}
+- {id: q47, category: typo, split: tune, query: counterparty setlement, intent: Typo of "counterparty settlement"., auto: {kind: terms, terms: [settlement]}}
+- {id: q48, category: typo, split: test, query: megawat hours, intent: Typo of "megawatt hours"., auto: {kind: terms, terms: [megawatt]}}
+- {id: q49, category: typo, split: tune, query: confrence call tomorrow, intent: Typo of "conference call tomorrow"., auto: {kind: phrase, phrase: conference call}}
+- {id: q50, category: typo, split: test, query: volatilty in the market, intent: Typo of "volatility in the market"., auto: {kind: terms, terms: [volatility]}}

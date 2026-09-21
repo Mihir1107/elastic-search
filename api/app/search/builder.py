@@ -93,6 +93,9 @@ class StructuredFilters:
     after: date | None = None
     before: date | None = None
     has_attachment: bool | None = None
+    #: Review tags (any of them). They live in a separate index, so the service
+    #: resolves them to an ids filter; ``build_structured_filters`` ignores them.
+    tags: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
         return not (
@@ -103,6 +106,7 @@ class StructuredFilters:
             or self.after
             or self.before
             or self.has_attachment is not None
+            or self.tags
         )
 
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.models import EmailDetail
 from app.names import display_name
 from app.routes.deps import get_es, get_settings_from
+from app.tags import get_tags
 
 router = APIRouter(tags=["emails"])
 
@@ -22,4 +23,5 @@ async def get_email(request: Request, email_id: str) -> EmailDetail:
         raise HTTPException(status_code=404, detail=f"email {email_id} not found") from exc
     source = dict(doc["_source"])
     source["from_name"] = display_name(str(source.get("from_name") or ""))
+    source["tags"] = (await get_tags(es, settings.tags_index, [email_id])).get(email_id, [])
     return EmailDetail(id=email_id, **source)

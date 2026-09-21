@@ -14,6 +14,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
 import { longDate, personName, plural, shortDate } from "@/lib/format";
+import { PRESET_TAGS } from "@/lib/useTags";
 import { Avatar } from "./Avatar";
 
 /** One spring for the card and everything riding inside it, so they move as one. */
@@ -24,11 +25,16 @@ export function ReadingPane({
   onClose,
   saved,
   onToggleSave,
+  tags,
+  onSetTags,
 }: {
   hit: EmailHit | null;
   onClose: () => void;
   saved: boolean;
   onToggleSave: () => void;
+  /** The open email's review tags, including changes made since it was fetched. */
+  tags: string[];
+  onSetTags: (next: string[]) => void;
 }) {
   const [tab, setTab] = useState<"message" | "thread">("message");
   const [doc, setDoc] = useState<EmailDoc | null>(null);
@@ -224,7 +230,7 @@ export function ReadingPane({
         {/* A measure, not the full overlay width: long lines are hard to read. */}
         <div className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}>
           {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
-          {!error && tab === "message" && <Message doc={doc} />}
+          {!error && tab === "message" && <Message doc={doc} tags={tags} onSetTags={onSetTags} />}
           {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}
         </div>
       </motion.div>
@@ -276,6 +282,83 @@ export function ReadingPane({
   );
 }
 
+const TAG_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The reviewer's marks on this email: the presets as toggles, plus any custom tag. */
+function TagBar({ tags, onChange }: { tags: string[]; onChange: (next: string[]) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const presets: readonly string[] = PRESET_TAGS;
+  const custom = tags.filter((t) => !presets.includes(t));
+  const name = draft.trim().toLowerCase();
+  const valid = TAG_NAME.test(name);
+
+  const toggle = (t: string) =>
+    onChange(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t].sort());
+
+  const chip = (on: boolean) =>
+    [
+      "rounded-full border px-2.5 py-0.5 text-[0.75rem] capitalize transition-colors",
+      on
+        ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
+        : "border-[var(--color-rule)] text-[var(--color-muted)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
+    ].join(" ");
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Review tags">
+      {[...presets, ...custom].map((t) => {
+        const on = tags.includes(t);
+        return (
+          <button
+            key={t}
+            onClick={() => toggle(t)}
+            aria-pressed={on}
+            title={on ? `Remove the ${t} tag` : `Tag as ${t}`}
+            // Inline, as in Insights: a second text-* utility would lose to the size one.
+            style={on ? { color: "var(--color-surface)" } : undefined}
+            className={chip(on)}
+          >
+            {t}
+          </button>
+        );
+      })}
+      {adding ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!valid) return;
+            if (!tags.includes(name)) onChange([...tags, name].sort());
+            setDraft("");
+            setAdding(false);
+          }}
+        >
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              setDraft("");
+              setAdding(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") e.currentTarget.blur();
+            }}
+            aria-label="New tag name"
+            aria-invalid={draft !== "" && !valid}
+            placeholder="new tag"
+            maxLength={32}
+            className="w-28 rounded-full border border-[var(--color-rule-strong)] bg-transparent px-2.5 py-0.5 text-[0.75rem] outline-none aria-[invalid=true]:border-[var(--color-marker-key-solid)]"
+          />
+        </form>
+      ) : (
+        <button onClick={() => setAdding(true)} className={chip(false)} title="Add another tag">
+          + Tag
+        </button>
+      )}
+    </div>
+  );
+}
+
 function IconButton({
   onClick,
   label,
@@ -299,7 +382,15 @@ function IconButton({
   );
 }
 
-function Message({ doc }: { doc: EmailDoc | null }) {
+function Message({
+  doc,
+  tags,
+  onSetTags,
+}: {
+  doc: EmailDoc | null;
+  tags: string[];
+  onSetTags: (next: string[]) => void;
+}) {
   if (!doc) return <Loading />;
 
   return (
@@ -324,6 +415,8 @@ function Message({ doc }: { doc: EmailDoc | null }) {
           {longDate(doc.date)}
         </time>
       </div>
+
+      <TagBar tags={tags} onChange={onSetTags} />
 
       <div className="prose-mail mt-5">{doc.body}</div>
 

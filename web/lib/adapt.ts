@@ -74,6 +74,7 @@ interface WireHit {
   /** 1-based position inside each leg; null when that leg did not return it. */
   bm25_rank: number | null;
   vector_rank: number | null;
+  tags?: string[];
 }
 
 interface WireSearch {
@@ -178,6 +179,7 @@ export function adaptHit(h: WireHit, reranked = false): EmailHit {
       rerank: reranked ? h.score : null,
     },
     topics: [],
+    tags: h.tags ?? [],
   };
 }
 
@@ -274,6 +276,7 @@ export function adaptEmail(w: WireEmail): EmailDoc {
     semantic_snippet: null,
     signals: { bm25_rank: null, vector_rank: null, rrf: 0, rerank: null },
     topics: [],
+    tags: w.tags ?? [],
     body: w.body ?? "",
     quoted_text: w.quoted_text ?? "",
   };

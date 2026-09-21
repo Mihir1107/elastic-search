@@ -10,24 +10,38 @@ import { NextRequest, NextResponse } from "next/server";
 
 const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8000";
 
-export async function GET(
-  req: NextRequest,
-  ctx: { params: Promise<{ path: string[] }> },
-) {
+/** Response headers worth forwarding: the body type, and what an export download needs. */
+const PASS_HEADERS = [
+  "content-type",
+  "content-disposition",
+  "x-ledger-export-mode",
+  "x-ledger-export-truncated",
+];
+
+async function forward(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const target = `${API_BASE_URL}/${path.join("/")}${req.nextUrl.search}`;
+  const hasBody = req.method === "PUT" || req.method === "POST";
 
   try {
     const res = await fetch(target, {
-      headers: { accept: "application/json" },
+      method: req.method,
+      headers: {
+        accept: req.headers.get("accept") ?? "application/json",
+        ...(hasBody ? { "content-type": "application/json" } : {}),
+      },
+      body: hasBody ? await req.text() : undefined,
       signal: req.signal,
       cache: "no-store",
     });
-    const body = await res.text();
-    return new NextResponse(body, {
-      status: res.status,
-      headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
-    });
+    const headers = new Headers();
+    for (const name of PASS_HEADERS) {
+      const value = res.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    // Streamed through, so a large CSV export never has to fit in memory here.
+    return new NextResponse(res.body, { status: res.status, headers });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       // The browser cancelled an in-flight search; not an error worth reporting.
@@ -39,3 +53,7 @@ export async function GET(
     );
   }
 }
+
+export const GET = forward;
+export const PUT = forward;
+export const POST = forward;

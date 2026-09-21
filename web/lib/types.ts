@@ -48,6 +48,8 @@ export interface SearchFilters {
   after?: string;
   before?: string;
   has_attachment?: boolean;
+  /** Review tags (any of them). */
+  tag?: string[];
 }
 
 /** Why a hit surfaced: its rank in each retrieval leg, and the fused score. */
@@ -89,6 +91,14 @@ export interface EmailHit {
    * the UI falls back to the folder. See DECISIONS.md D19.
    */
   topics: string[];
+  /** Review tags on this email (relevant, privileged, hot, ...). */
+  tags: string[];
+}
+
+/** A tag in use and how many emails carry it. */
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 /** A full email, as returned by GET /emails/{id}. */

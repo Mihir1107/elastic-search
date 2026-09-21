@@ -34,6 +34,8 @@ class Settings(BaseSettings):
 
     # Index / models.
     emails_alias: str = "emails"
+    #: Review tags, kept apart from the email index so a reindex cannot drop them (D37).
+    tags_index: str = "ledger-tags"
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dims: int = 384
     # BGE retrieval uses an instruction prefix on the QUERY side only.

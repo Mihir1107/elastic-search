@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.es import make_client
 from app.probe import get_license_tier, probe_native_rrf
-from app.routes import emails, health, search, suggest, threads
+from app.routes import emails, export, health, search, suggest, tags, threads
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("ledger.api")
@@ -88,6 +88,8 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(tags.router)
+app.include_router(export.router)
 app.include_router(search.router)
 app.include_router(emails.router)
 app.include_router(threads.router)

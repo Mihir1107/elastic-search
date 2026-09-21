@@ -67,6 +67,8 @@ class SearchHit(BaseModel):
     #: 1-based position within each retrieval leg, or None if that leg missed it.
     bm25_rank: int | None = None
     vector_rank: int | None = None
+    #: Review tags on this email (DECISIONS D37).
+    tags: list[str] = []
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -101,6 +103,7 @@ class EmailDetail(BaseModel):
     has_attachment: bool = False
     attachment_names: list[str] = []
     duplicate_count: int = 1
+    tags: list[str] = []
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -109,6 +112,34 @@ class ThreadResponse(BaseModel):
     total: int
     messages: list[EmailDetail]
     timings: Timings
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+class TagsResponse(BaseModel):
+    tags: list[TagCount]
+
+
+class EmailTags(BaseModel):
+    id: str
+    tags: list[str]
+
+
+class SetTagsRequest(BaseModel):
+    tags: list[str]
+
+
+class BatchTagsRequest(BaseModel):
+    ids: list[str]
+    add: list[str] = []
+    remove: list[str] = []
+
+
+class BatchTagsResponse(BaseModel):
+    updated: int
 
 
 class Suggestion(BaseModel):

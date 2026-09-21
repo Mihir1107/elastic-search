@@ -252,6 +252,8 @@ function toHit(
     semantic_snippet: semantic,
     signals: { bm25_rank: bm25Rank, vector_rank: vecRank, rrf, rerank },
     topics: doc.concepts.slice(0, 3),
+    // Fixture mode keeps review tags in memory in lib/api.ts, which overlays them.
+    tags: [],
   };
 }
 

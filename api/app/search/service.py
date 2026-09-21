@@ -52,6 +52,7 @@ from app.search.parser import ParsedQuery, parse
 from app.search.rerank import rerank as rerank_hits
 from app.search.spelling import build_suggest, corrected_text
 from app.search.spelling import corrections as find_corrections
+from app.tags import get_tags, ids_with_tags
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ def _snippets(hit: FusedHit) -> list[str]:
     return []
 
 
-def _to_hit(hit: FusedHit) -> SearchHit:
+def _to_hit(hit: FusedHit, tags: list[str] | None = None) -> SearchHit:
     source = hit.source
     return SearchHit(
         id=hit.doc_id,
@@ -149,7 +150,33 @@ def _to_hit(hit: FusedHit) -> SearchHit:
         # than approximating from its position in the fused list.
         bm25_rank=hit.ranks.get("bm25"),
         vector_rank=hit.ranks.get("knn"),
+        tags=tags or [],
     )
+
+
+async def resolve_filters(
+    es: AsyncElasticsearch,
+    settings: Settings,
+    parsed: ParsedQuery,
+    structured: StructuredFilters | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Every filter a search applies, and any warnings resolving them raised.
+
+    Shared with export, so an export holds exactly the emails the search did.
+    Review tags live in their own index (D37), so a tag filter becomes an ids
+    filter over the emails carrying the tag -- an empty one when none do.
+    """
+    filters = build_filters(parsed)
+    warnings: list[str] = []
+    if structured is not None:
+        # Facet clicks AND with whatever the query string already said.
+        filters = filters + build_structured_filters(structured)
+        if structured.tags:
+            ids, truncated = await ids_with_tags(es, settings.tags_index, structured.tags)
+            filters.append({"ids": {"values": ids}})
+            if truncated:
+                warnings.append(f"tag filter limited to the first {len(ids)} tagged emails")
+    return filters, warnings
 
 
 async def _hydrate(
@@ -247,10 +274,7 @@ async def run_search(
     # a 20-document window, and page two repeats results page one already showed.
     window = settings.fusion_window
 
-    filters = build_filters(parsed)
-    if structured is not None:
-        # Facet clicks AND with whatever the query string already said.
-        filters = filters + build_structured_filters(structured)
+    filters, filter_warnings = await resolve_filters(es, settings, parsed, structured)
     bm25_query = build_bm25_query(
         parsed, filters, settings.bm25_fields, settings.bm25_minimum_should_match
     )
@@ -374,6 +398,7 @@ async def run_search(
             highlight_query=bm25_query if parsed.has_text else None,
         )
         timings.highlight_ms = round((perf_counter() - t0) * 1000, 2)
+    page_tags = await get_tags(es, settings.tags_index, [hit.doc_id for hit in page])
 
     next_token = (
         encode_page_token(offset + page_size)
@@ -381,7 +406,7 @@ async def run_search(
         else None
     )
 
-    warnings = list(parsed.warnings)
+    warnings = [*parsed.warnings, *filter_warnings]
     if rerank_note:
         warnings.append(rerank_note)
     if len(fused) >= settings.fusion_window and next_token is None:
@@ -407,7 +432,7 @@ async def run_search(
         understood=_understood(parsed, corrections),
         total=total,
         size=page_size,
-        hits=[_to_hit(hit) for hit in page],
+        hits=[_to_hit(hit, page_tags.get(hit.doc_id)) for hit in page],
         facets=facet_payload,
         timings=timings,
         warnings=warnings,

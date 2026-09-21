@@ -281,6 +281,16 @@ mark.mk-block {
   white-space: nowrap;
 }
 
+/* A reviewer's tag (relevant, privileged, ...): outlined in ink, so it reads as
+   a mark someone made rather than a property of the email. */
+.tag-review {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-rule-strong);
+  color: var(--color-ink);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
 /* --- result rows --------------------------------------------------------- */
 
 .card {

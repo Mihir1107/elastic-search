@@ -21,9 +21,11 @@ interface Props {
   onOpen: (hit: EmailHit) => void;
   isSaved: (id: string) => boolean;
   onToggleSave: (hit: EmailHit) => void;
+  /** Review tags for a hit, including changes made since it was fetched. */
+  tagsFor: (hit: EmailHit) => string[];
 }
 
-export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave }: Props) {
+export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave, tagsFor }: Props) {
   return (
     <div className="card overflow-hidden">
       {hits.map((hit, i) => (
@@ -35,6 +37,7 @@ export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave }: Pr
           onOpen={onOpen}
           saved={isSaved(hit.id)}
           onToggleSave={onToggleSave}
+          reviewTags={tagsFor(hit)}
         />
       ))}
     </div>
@@ -48,6 +51,7 @@ function Row({
   onOpen,
   saved,
   onToggleSave,
+  reviewTags,
 }: {
   hit: EmailHit;
   index: number;
@@ -55,6 +59,7 @@ function Row({
   onOpen: (h: EmailHit) => void;
   saved: boolean;
   onToggleSave: (h: EmailHit) => void;
+  reviewTags: string[];
 }) {
   const bodyFragment = hit.highlight.body?.[0];
   const semanticOnly = hit.signals.bm25_rank === null && hit.signals.vector_rank !== null;
@@ -122,6 +127,12 @@ function Row({
             {/* Tags give up room before the controls do, so the star is never
                 pushed off the edge on a densely tagged result. */}
             <span className="flex min-w-0 flex-1 gap-1.5 overflow-hidden">
+              {/* The reviewer's marks come first: they are the point of a review. */}
+              {reviewTags.map((t) => (
+                <span key={`review-${t}`} className="tag tag-review">
+                  {t}
+                </span>
+              ))}
               {tags.slice(0, 3).map((t) => (
                 <span key={t} className="tag">
                   {t}

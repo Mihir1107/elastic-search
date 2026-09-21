@@ -17,8 +17,11 @@ import { Insights } from "./Insights";
 import { AttachmentsLens, DatesLens, PeopleLens, TopicsLens } from "./LensPanels";
 import { ThemeToggle } from "./ThemeToggle";
 import { TimingNote } from "./TimingNote";
+import { ReviewActions } from "./ReviewActions";
 import type { EmailHit, SearchFilters, SearchResponse } from "@/lib/types";
 import { useInsightsOpen, type View } from "@/lib/useLocal";
+import type { Tags } from "@/lib/useTags";
+import { exportUrl, isMock } from "@/lib/api";
 import { count, plural } from "@/lib/format";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -52,11 +55,18 @@ interface Props {
   view: View;
   onView: (v: View) => void;
   savedCount: number;
+  /** Review tags (D37): what is marked, and how to change it. */
+  tags: Tags;
 }
 
 export function Workspace(p: Props) {
   const { data } = p;
   const insights = useInsightsOpen();
+  const tagsOf = (h: EmailHit) => p.tags.tagsFor(h.id, h.tags);
+  const openTags = p.open ? tagsOf(p.open) : [];
+  const setOpenTags = (next: string[]) => {
+    if (p.open) void p.tags.set(p.open.id, next, openTags);
+  };
 
   const lenses: LensCount[] = data
     ? [
@@ -190,6 +200,21 @@ export function Workspace(p: Props) {
               }
               skipReason={data?.warnings.find((w) => w.startsWith("reranking skipped"))}
             />
+            {data && (
+              <ReviewActions
+                count={data.hits.length}
+                onTagAll={(tag) =>
+                  void p.tags.tagMany(
+                    data.hits.map((h) => ({ id: h.id, tags: tagsOf(h) })),
+                    tag,
+                  )
+                }
+                exportHref={
+                  isMock ? null : exportUrl({ q: data.query, filters: p.filters, rerank: p.rerank })
+                }
+                error={p.tags.error}
+              />
+            )}
             {data && <TimingNote timing={data.timing} />}
             <InsightsToggle on={insights.open} onChange={insights.toggle} />
           </div>
@@ -228,6 +253,7 @@ export function Workspace(p: Props) {
                       onOpen={p.onOpen}
                       isSaved={p.isSaved}
                       onToggleSave={p.onToggleSave}
+                      tagsFor={tagsOf}
                     />
                     {data.next_page_token && (
                       <div className="mt-4 flex justify-center">
@@ -264,6 +290,8 @@ export function Workspace(p: Props) {
                 onClose={() => p.onOpen(null)}
                 saved={p.open ? p.isSaved(p.open.id) : false}
                 onToggleSave={() => p.open && p.onToggleSave(p.open)}
+                tags={openTags}
+                onSetTags={setOpenTags}
               />
             </section>
 
@@ -286,6 +314,7 @@ export function Workspace(p: Props) {
                     onToggle={p.onToggleFilter}
                     onRange={p.onRange}
                     onAttachments={p.onAttachments}
+                    tagCounts={p.tags.counts}
                   />
                 </div>
               )}
@@ -319,6 +348,8 @@ export function Workspace(p: Props) {
                 onClose={() => p.onOpen(null)}
                 saved={p.isSaved(p.open.id)}
                 onToggleSave={() => p.open && p.onToggleSave(p.open)}
+                tags={openTags}
+                onSetTags={setOpenTags}
               />
             </motion.div>
           </div>

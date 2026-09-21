@@ -12,6 +12,7 @@ import type {
   SearchParams,
   SearchResponse,
   Suggestion,
+  TagCount,
   ThreadResponse,
 } from "./types";
 import * as mock from "./mock/engine";
@@ -45,6 +46,19 @@ async function get<T = unknown>(path: string, signal?: AbortSignal): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+async function send<T = unknown>(method: "PUT" | "POST", path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api/proxy${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, detail || res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -71,7 +85,62 @@ function toQuery(params: SearchParams): string {
   if (typeof f.has_attachment === "boolean") {
     qs.set("has_attachment", String(f.has_attachment));
   }
+  for (const t of f.tag ?? []) qs.append("tag", t);
   return qs.toString();
+}
+
+/* ------------------------------------------------------------------ tags */
+
+/** Fixture mode has no server to remember tags, so they live here for the session. */
+const mockTags = new Map<string, string[]>();
+
+function withMockTags<T extends { id: string; tags: string[] }>(item: T): T {
+  return { ...item, tags: mockTags.get(item.id) ?? item.tags };
+}
+
+export async function setTags(id: string, tags: string[]): Promise<string[]> {
+  if (USE_MOCK) {
+    const clean = [...new Set(tags.map((t) => t.toLowerCase()))].sort();
+    if (clean.length) mockTags.set(id, clean);
+    else mockTags.delete(id);
+    return settle(clean, 40);
+  }
+  const res = await send<{ tags: string[] }>("PUT", `/emails/${encodeURIComponent(id)}/tags`, {
+    tags,
+  });
+  return res.tags;
+}
+
+export async function batchTags(ids: string[], add: string[], remove: string[] = []): Promise<number> {
+  if (USE_MOCK) {
+    for (const id of ids) {
+      const next = new Set(mockTags.get(id) ?? []);
+      add.forEach((t) => next.add(t));
+      remove.forEach((t) => next.delete(t));
+      if (next.size) mockTags.set(id, [...next].sort());
+      else mockTags.delete(id);
+    }
+    return settle(ids.length, 60);
+  }
+  const res = await send<{ updated: number }>("POST", "/tags/batch", { ids, add, remove });
+  return res.updated;
+}
+
+export async function listTags(signal?: AbortSignal): Promise<TagCount[]> {
+  if (USE_MOCK) {
+    const counts = new Map<string, number>();
+    for (const tags of mockTags.values()) tags.forEach((t) => counts.set(t, (counts.get(t) ?? 0) + 1));
+    const out = [...counts].map(([tag, count]) => ({ tag, count }));
+    return settle(out.sort((a, b) => b.count - a.count), 30, signal);
+  }
+  const res = await get<{ tags: TagCount[] }>("/tags", signal);
+  return res.tags;
+}
+
+/** Where the browser downloads the current result set as CSV (live API only). */
+export function exportUrl(params: SearchParams): string {
+  const { page_token: _ignored, size: _size, ...rest } = params;
+  return `/api/proxy/export?${toQuery(rest)}`;
 }
 
 export async function search(
@@ -80,8 +149,12 @@ export async function search(
 ): Promise<SearchResponse> {
   if (USE_MOCK) {
     const result = mock.search(params);
+    let hits = result.hits.map(withMockTags);
+    const wanted = params.filters.tag ?? [];
+    if (wanted.length) hits = hits.filter((h) => h.tags.some((t) => wanted.includes(t)));
+    const total = wanted.length ? hits.length : result.total;
     // Reranking really is slow; let the UI show that it is.
-    return settle(result, params.rerank ? 220 : 90, signal);
+    return settle({ ...result, hits, total }, params.rerank ? 220 : 90, signal);
   }
   return adaptSearch(await get(`/search?${toQuery(params)}`, signal));
 }
@@ -90,7 +163,7 @@ export async function getEmail(id: string, signal?: AbortSignal): Promise<EmailD
   if (USE_MOCK) {
     const doc = mock.getEmail(id);
     if (!doc) throw new ApiError(404, `No email with id ${id}`);
-    return settle(doc, 70, signal);
+    return settle(withMockTags(doc), 70, signal);
   }
   return adaptEmail(await get(`/emails/${encodeURIComponent(id)}`, signal));
 }

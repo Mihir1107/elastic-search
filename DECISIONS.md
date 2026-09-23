@@ -739,3 +739,60 @@ changes are two-sided (14 down, 14 up, mostly conceptual queries). That fits a r
 approximate kNN graph and redistributed per-shard BM25 statistics, not a loss: the text is
 unchanged apart from the repairs. The baseline is re-written for `emails-v3`.
 
+
+## D39 — Hardening and serving-path fixes from a code review
+A review found one exploitable issue, a set of correctness bugs, and avoidable work on the hot
+path. Each fix below has a test.
+
+**Security.**
+- *CSRF through the web proxy.* The proxy stamped `application/json` on every write it
+  forwarded. A `text/plain` form POST from any site (a simple request, so no CORS preflight)
+  therefore reached `/tags/batch` as valid JSON and could strip `privileged` tags. Writes must now
+  be `application/json` and same-origin (`Sec-Fetch-Site`, falling back to `Origin`). Path
+  segments are re-encoded, so `%3F` in an id cannot smuggle in a query string.
+- *Access.* The API now honours an optional `LEDGER_API_KEY` (`X-API-Key`), which the proxy
+  adds server-side; `/livez` stays open. The web tier has optional basic auth
+  (`LEDGER_BASIC_AUTH`), and the signed-in name is forwarded as `X-Ledger-User`, so tags record
+  `updated_by`. Any client-sent copy of that header is dropped first.
+- *Least privilege.* `make api-user` creates `ledger_api`: read on the email indices, write on
+  the tags index, and cluster `monitor`. The API no longer runs as `elastic`.
+- *Exposure.* Compose publishes ES and Kibana on 127.0.0.1 only. Preflight generates passwords
+  for a new `.env` and warns about `changeme`. `/docs` and `/openapi.json` are off by default.
+
+**Correctness.**
+- A malformed `tag=` filter was a 500. It is now a 422, as are more than 16 values for any
+  facet parameter, and oversized tag or batch bodies.
+- `/suggest` counted people over emails whose *subject* matched the prefix, because the
+  aggregation shared the subject query. `kenneth.lay` suggested no one, and `jeff.skilling`
+  showed 1 email instead of 66. People and subjects are now separate searches in one `msearch`,
+  and no regex is built from input.
+- Tag edits from the UI use `PATCH /emails/{id}/tags` with add/remove, applied by the same
+  painless script as a batch. A concurrent reviewer's edit is kept rather than overwritten.
+  The script also enforces the 16-tag cap.
+- "Load more" could append the previous query's page to a new query's results. It is now
+  sequence-guarded and abortable.
+- A ranked export reports `truncated: true` when matches exceed the fusion window. A failure
+  mid-stream writes an `ERROR` row instead of ending the file silently.
+- Thread messages get display names and tags, like `/emails/{id}`.
+- Ingest moves a checksum-failed archive aside instead of failing every later run. It also
+  restores the index's own refresh interval and replica count after a bulk load (replicas are
+  off during it).
+
+**Performance.** A first page still runs the full pipeline, so benchmarks and evaluation
+measure real work.
+- Embedding the query now overlaps the BM25 request. Only a spelling-corrected query is
+  embedded again.
+- Query vectors are cached (LRU). Model forward passes are bounded by a semaphore
+  (`MODEL_CONCURRENCY`) instead of competing in the thread pool.
+- Later pages and exports reuse the first page's fused list (TTL cache, keyed on query,
+  filters, method, rerank and a tag-write generation, so a tag change is never hidden).
+- Sequential spot check, 30 fresh queries: page 1 p50 143 → 112 ms and p95 192 → 144 ms;
+  page 2 p50 100 → 38 ms.
+
+**Not done here, deliberately.**
+- *Tags stay in their own index.* Copying them onto the email documents would make tag filters
+  exact and uncapped, but it needs a reindex hook.
+- *Vector quantization (`int8_hnsw`/`bbq_hnsw`) is left alone.* It changes recall, so it goes
+  through the eval gate on the next index version.
+- *No completion index for people suggestions yet.*
+- *Dedupe still holds the whole corpus in memory.* It fits at 100k messages.

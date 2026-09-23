@@ -21,6 +21,7 @@ never picks "fuzzy" vs "prefix".
 - [Frontend](#frontend)
 - [Relevance Evaluation](#relevance-evaluation)
 - [Operations & HA](#operations--ha)
+- [Security](#security)
 - [Quickstart](#quickstart)
 - [Configuration](#configuration)
 - [Repository Layout](#repository-layout)
@@ -66,18 +67,23 @@ a polished investigation UI:
 │                  │     │                  │     │  Elasticsearch 9.5.3        │
 │   Next.js 15     │────▶│   FastAPI API     │────▶│  3-node TLS cluster         │
 │   (React 19)     │     │                  │     │                             │
-│   Port 3000      │     │   Port 8000      │     │  es01:9200  es02:9201       │
-│                  │     │                  │     │  es03:9202                  │
+│   Port 3000      │     │ 127.0.0.1:8000   │     │  127.0.0.1:9200/9201/9202   │
+│                  │     │                  │     │  (loopback only)            │
 └──────────────────┘     └──────────────────┘     └─────────────────────────────┘
         │                        │                           ▲
         │                        │                           │
-   /api/proxy/*             Query Parse                      │
-   (server-side             BM25 + kNN                       │
-    proxy, no               RRF Fusion              ┌───────────────┐
-    creds in               Cross-Encoder             │  Ingest CLI   │
-    client)                 Rerank                   │  (7 stages)   │
-                                                     └───────────────┘
+   middleware.ts            X-API-Key check                  │
+   (optional sign-in)       Query Parse                      │
+   /api/proxy/*             BM25 ∥ embed → kNN      ┌───────────────┐
+   (server-side proxy,      RRF Fusion              │  Ingest CLI   │
+    CSRF guard, adds        Cross-Encoder Rerank    │  (7 stages)   │
+    the API key)            Result cache            └───────────────┘
 ```
+
+The browser only talks to Next.js. The proxy refuses cross-site writes, and
+adds the API key on the server, so neither the key nor the API's address ever
+reaches the client. The API connects to Elasticsearch as a least-privilege
+user, not as `elastic`. See [Security](#security).
 
 ### Data Flow
 
@@ -176,6 +182,8 @@ No `query_string` or `regexp` — user input never has query-injection power.
 - **Retrieval attribution**: every hit carries `matched_by: ["bm25", "knn"]` with per-leg ranks
 - **Cross-encoder reranking** is off by default and auto-skipped for queries with phrases/operators
 - **ML off the event loop**: embedding and reranking run in `asyncio.to_thread` so PyTorch doesn't block FastAPI
+- **Embedding overlaps BM25**: the query is embedded while the BM25 request is in flight. It is re-embedded only when spelling correction changes the text
+- **Query vectors are cached** (LRU), and a semaphore (`MODEL_CONCURRENCY`) bounds concurrent forward passes, so parallel requests don't oversubscribe the CPU
 
 ### API Endpoints
 
@@ -184,12 +192,20 @@ No `query_string` or `regexp` — user input never has query-injection power.
 | `GET /search?q=&size=&page_token=&rerank=` | Hybrid search with facets, timings, query explanation |
 | `GET /emails/{id}` | Full email document |
 | `GET /threads/{thread_id}` | Complete conversation thread, chronological |
-| `GET /suggest?prefix=` | Autocomplete over senders and subjects |
-| `PUT /emails/{id}/tags` | Replace an email's review tags (`relevant`, `privileged`, `hot`, ...) |
+| `GET /suggest?prefix=` | Autocomplete: senders whose address starts with the prefix, and matching subjects (one `msearch`) |
+| `PATCH /emails/{id}/tags` | Add / remove review tags atomically. A concurrent reviewer's edit is kept. The UI uses this |
+| `PUT /emails/{id}/tags` | Replace an email's review tags (`relevant`, `privileged`, `hot`, ...); last write wins |
 | `POST /tags/batch` | Add / remove tags on up to 500 emails |
 | `GET /tags` | Tags in use, with counts |
 | `GET /export?q=&tag=...` | The result set as CSV: every match for a filter-only query, the ranked list for a text query (D37) |
-| `GET /health` | API + cluster health, license, node count, doc count |
+| `GET /health` | Readiness: API + cluster health, license, node count, doc count |
+| `GET /livez` | Liveness: the process answers. Needs no API key and touches nothing |
+
+When `LEDGER_API_KEY` is set, every endpoint except `/livez` requires it as
+`X-API-Key`. Invalid input is a 4xx and never a 500: a malformed `tag=`, more than
+16 values for one filter, or an oversized tag or batch body is a 422, and a
+request Elasticsearch refuses is a 400. `/docs` and `/openapi.json` are served
+only with `EXPOSE_DOCS=true`.
 
 Every response includes a per-stage `timings` breakdown (`parse_ms`, `embed_ms`,
 `bm25_ms`, `knn_ms`, `fuse_ms`, `rerank_ms`, `total_ms`) and an `understood`
@@ -213,6 +229,14 @@ id-filtered query over just the returned page**. Highlighting costs per document
 retrieval leg is what holds the latency target while pagination stays correct.
 See DECISIONS D32.
 
+**Later pages reuse the first page's ranking.** The fused candidate list is
+cached for five minutes, keyed on the query, the filters, the retrieval method,
+the rerank flag and a tag-write counter, so a tag change is never hidden
+behind a stale page. Page two then costs only its own hydration (p50 100 → 38 ms),
+and a ranked CSV export no longer re-runs retrieval and reranking for every
+page. A first page always runs the full pipeline, so benchmarks and evaluation
+measure real work (D39).
+
 ---
 
 ## Ingestion Pipeline
@@ -223,13 +247,13 @@ stats to `data/stats/<stage>.json`.
 
 | Stage | Key Mechanics |
 |---|---|
-| **1. Download** | Streams Enron tarball with HTTP `Range` resume; SHA-256 verification; deterministic dev subset via SHA-1 mailbox ordering |
+| **1. Download** | Streams Enron tarball with HTTP `Range` resume; SHA-256 verification (a failing archive is moved to `.bad` so the next run downloads again); deterministic dev subset via SHA-1 mailbox ordering |
 | **2. Parse** | RFC-822 `BytesParser`; Lotus Notes DN recovery; quoted-text splitting; UTC date normalisation |
 | **3. Normalise** | Address lowercasing; recipient deduplication; whitespace collapsing; `person_id` assignment |
 | **4. Dedupe** | Content-addressed SHA-1 over `(from, recipients, date, subject, body)`; cross-mailbox merge |
 | **5. Thread** | Union-Find with path compression; RFC-822 `In-Reply-To`/`References` linkage; subject fallback that only attaches a `Re:`/`Fw:` message to the one it answers, within 30 days (D36) |
 | **6. Embed** | `bge-small-en-v1.5` 384-d vectors; 200-token sliding window chunks (40-token overlap, max 8/doc); batched encoding; append-mode resume |
-| **7. Index** | Bulk load with disabled refresh; pre-cutover verification (count + vectors); atomic zero-downtime alias flip |
+| **7. Index** | Bulk load with refresh and replicas off, and the index's own settings restored afterwards; pre-cutover verification (count + vectors); atomic zero-downtime alias flip |
 
 ```bash
 make ingest-dev     # 10k-message dev subset → ~7,355 unique emails
@@ -258,11 +282,13 @@ dark mode.
 
 - **Travelling Search Pill**: Animates smoothly from the hero landing to the docked workspace header via `layoutId` — no destroy/remount
 - **Syntax-Highlighted Input**: Dual-layer mirror renders colored token chips (`from:`, `"phrases"`, dates) in real-time as you type
-- **Dual-Ink Highlighting**: Yellow markers for BM25 keyword hits, blue tinted passages for vector semantic matches
+- **Dual-Ink Highlighting**: Yellow marker strokes for BM25 keyword hits, blue tinted passages for vector semantic matches. When a result set lands, the ink is drawn across each match, row by row
+- **Continuous Selection**: One ink rail glides between rows as you move through results. A new search keeps the old results on screen, dimmed, under a hairline progress line, instead of blanking them
 - **Signal Bars**: Stacked mini gauges showing each result's BM25 vs vector retrieval rank
 - **Facet Filtering**: Interactive sidebar with top senders, folders, topics, attachment counts — click to filter
 - **Timeline Histogram**: Month-by-month hit distribution with click-and-drag date range selection
-- **Reading Pane**: Full message view with metadata, formatted body, collapsible quoted text, thread timeline
+- **Reading Pane**: Full message view with metadata, collapsible quoted text and the thread. Hard-wrapped bodies are reflowed into paragraphs and set in the serif. **Show original line breaks** switches to the sender's exact layout in monospace, for tables and address blocks
+- **Review Tags**: `relevant`, `privileged`, `hot` or any custom tag, saved as atomic add/remove so two reviewers never overwrite each other. "Tag page" and "Export CSV" share one toolbar with Rerank and timing
 - **Thread Reconstruction**: Vertical timeline spine showing the complete conversation chain
 
 ![Reading Pane](docs/images/reading-pane.jpeg)
@@ -272,7 +298,8 @@ dark mode.
 - **Dark Mode**: Lamp-lit desk aesthetic (not inverted), zero-flash via head script
 - **Mock Mode**: `NEXT_PUBLIC_USE_MOCK=true` runs the full UI standalone with simulated BM25/kNN/RRF
 - **Keyboard Shortcuts**: `⌘K` / `Ctrl+K` focuses search from anywhere
-- **Server Proxy**: `/api/proxy/[...path]` routes to FastAPI — no backend URLs or auth in client bundles
+- **Server Proxy**: `/api/proxy/[...path]` routes to FastAPI — no backend URLs or keys in client bundles. Writes must be same-origin JSON (CSRF guard), and upstream calls time out
+- **Optional Sign-in**: `LEDGER_BASIC_AUTH` puts the app behind a login, and tags record who made them
 
 ![Facet Filtering](docs/images/facet-filtered.jpeg)
 
@@ -381,6 +408,28 @@ make restore SNAP=<name>    # restore into a NEW index version (never overwrites
 
 ---
 
+## Security
+
+Ledger holds a mailbox archive and a reviewer's work product (privilege calls),
+so it is locked down by default and can be locked down further for sharing.
+
+| Layer | Default | To expose beyond this machine |
+|---|---|---|
+| Elasticsearch / Kibana ports | Published on `127.0.0.1` only | Leave them there; only the API needs the cluster |
+| Cluster passwords | `make preflight` generates them for a new `.env`, and warns on `changeme` | Rotate any default password with `POST /_security/user/elastic/_password` |
+| API → Elasticsearch | Least-privilege `ledger_api` user via `make api-user`: read on email indices, write on the tags index, cluster `monitor` | — |
+| API | Binds `127.0.0.1`; `/docs` off | Set `LEDGER_API_KEY` in `.env` **and** `web/.env.local` |
+| Web app | Open | Set `LEDGER_BASIC_AUTH="alice:pw,bob:pw"` and serve behind TLS |
+| Browser → proxy | Writes must be `application/json` and same-origin | — |
+
+What stops injection: user input never reaches a `query_string`, `regexp` or
+`wildcard` query. Highlight fragments are rebuilt from text nodes, never parsed
+as HTML. CSV cells that a spreadsheet would execute are quote-prefixed. The
+tarball is extracted with `filter="data"`. The full review and every fix are in
+DECISIONS D39.
+
+---
+
 ## Quickstart
 
 ### Prerequisites
@@ -406,8 +455,7 @@ make web-install        # npm ci in web/
 ### 2. Configure
 
 ```bash
-cp .env.example .env
-# Edit .env — change ELASTIC_PASSWORD and KIBANA_PASSWORD
+make preflight          # creates .env with generated ELASTIC/KIBANA passwords
 
 cp web/.env.local.example web/.env.local
 ```
@@ -475,14 +523,23 @@ stopped, and `make stats` prints what each stage processed, skipped and failed.
 ### 6. Start the API
 
 ```bash
-uv run uvicorn app.main:app --app-dir api --reload    # http://localhost:8000/docs
+make api-user           # once: a least-privilege ES user for the API (writes .env)
+make api                # http://127.0.0.1:8000  (set EXPOSE_DOCS=true for /docs)
 ```
+
+The API binds to loopback. Before exposing Ledger beyond this machine, set
+`LEDGER_API_KEY` (in `.env` and `web/.env.local`) and `LEDGER_BASIC_AUTH` in
+`web/.env.local`; see DECISIONS D39.
 
 ### 7. Start the Frontend
 
 ```bash
 make web                # http://localhost:3000
 ```
+
+If you set `LEDGER_API_KEY` for the API, put the same value in
+`web/.env.local`: the proxy adds it to every request. Add `LEDGER_BASIC_AUTH`
+there too to require a login.
 
 Next.js inlines `NEXT_PUBLIC_*` at **build** time. If you change
 `web/.env.local` after having built once, delete the build cache or the old
@@ -515,10 +572,13 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | `STACK_VERSION` | `9.5.3` | Elasticsearch Docker image tag |
 | `CLUSTER_NAME` | `ledger` | ES cluster name |
 | `LICENSE` | `basic` | Elastic license tier |
-| `ELASTIC_PASSWORD` | `changeme_elastic` | Superuser password (all nodes) |
-| `KIBANA_PASSWORD` | `changeme_kibana` | `kibana_system` user password |
+| `ELASTIC_PASSWORD` | generated by `make preflight` | Superuser password (all nodes); used by ingest and ops, not by the API once `ES_API_USERNAME` is set |
+| `KIBANA_PASSWORD` | generated by `make preflight` | `kibana_system` user password |
 | `ES_HOST` | `https://localhost:9200,...` | Comma-separated cluster nodes (round-robin HA) |
-| `ES_USERNAME` | `elastic` | ES client username |
+| `ES_USERNAME` | `elastic` | ES username for ingest and ops |
+| `ES_API_USERNAME` / `ES_API_PASSWORD` | set by `make api-user` | Least-privilege user the API connects as; unset falls back to `elastic` |
+| `LEDGER_API_KEY` | empty (open) | Required as `X-API-Key` on every API call except `/livez` when set |
+| `EXPOSE_DOCS` | `false` | Serve `/docs` and `/openapi.json` |
 | `ES_CA_CERT` | `./certs/ca.crt` | Path to cluster CA certificate |
 | `ES_TIMEOUT` | `30` | HTTP timeout (seconds) |
 | `EMAILS_ALIAS` | `emails` | Live index alias name |
@@ -529,15 +589,20 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | `FUSION_WINDOW` | `120` | Candidates fused per leg, and how deep pagination reaches |
 | `DEFAULT_PAGE_SIZE` | `20` | Results per page |
 | `RERANK_ENABLED` | `false` | Cross-encoder off by default (D25); `?rerank=true` overrides per request |
+| `MODEL_CONCURRENCY` | `2` | Concurrent embed/rerank forward passes |
+| `EMBED_CACHE_SIZE` | `1024` | Query vectors kept in memory |
+| `RESULT_CACHE_SIZE` / `RESULT_CACHE_TTL_S` | `256` / `300` | Fused result lists kept for pagination and export, and for how long |
 | `DEV_SUBSET_SIZE` | `10000` | Messages the `dev` subset targets; set to `100000` to reproduce the shipped index |
 | `INDEX_VERSION` | `v1` | Which `emails-vN` the ingest writes; the alias flips only after verification |
 
-The frontend reads two of its own, in `web/.env.local`:
+The frontend reads its own, in `web/.env.local`:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_USE_MOCK` | `true` when unset | `false` calls the real API; anything else serves the fixture corpus |
 | `API_BASE_URL` | `http://localhost:8000` | Server-side only — where FastAPI listens |
+| `LEDGER_API_KEY` | empty | Server-side only — must match the API's key when that is set |
+| `LEDGER_BASIC_AUTH` | empty (open) | `user:password,...` — requires a login; the name is recorded on tags |
 
 > **Never commit** `.env`, `data/`, `certs/`, or model weights.
 
@@ -549,21 +614,23 @@ The frontend reads two of its own, in `web/.env.local`:
 elastic-search/
 ├── api/                        # FastAPI search service
 │   ├── app/
-│   │   ├── main.py             #   lifespan, CORS, routes
+│   │   ├── main.py             #   lifespan, API-key check, error handlers, routes
 │   │   ├── config.py           #   pydantic-settings configuration
 │   │   ├── es.py               #   async Elasticsearch client factory
 │   │   ├── probe.py            #   license & RRF capability probing
 │   │   ├── names.py            #   display name normalisation
-│   │   ├── models.py           #   response models (SearchResponse, etc.)
+│   │   ├── models.py           #   request/response models, with body limits
+│   │   ├── tags.py             #   review tags: atomic add/remove, batch, counts
 │   │   ├── routes/             #   endpoint routers (search, emails, threads, suggest, tags, export, health)
 │   │   └── search/             #   search pipeline
 │   │       ├── parser.py       #     query understanding & tokenisation
 │   │       ├── builder.py      #     Elasticsearch query construction
-│   │       ├── embedder.py     #     BGE vector encoding (async)
+│   │       ├── embedder.py     #     BGE encoding, query-vector cache, inference gate
 │   │       ├── fusion.py       #     manual RRF implementation
 │   │       ├── rerank.py       #     cross-encoder reranking
-│   │       └── service.py      #     search orchestrator
-│   └── tests/                  #   unit + integration tests (8 modules)
+│   │       ├── spelling.py     #     typo correction for the embedded text
+│   │       └── service.py      #     search orchestrator + fused-result cache
+│   └── tests/                  #   unit + integration tests (12 modules)
 │
 ├── ingest/                     # Ingestion CLI
 │   ├── ingest/
@@ -581,11 +648,12 @@ elastic-search/
 │   └── tests/
 │
 ├── web/                        # Next.js frontend
+│   ├── middleware.ts           #   optional sign-in; reviewer name for tags
 │   ├── app/
 │   │   ├── layout.tsx          #   root layout, fonts, dark mode
 │   │   ├── page.tsx            #   landing ↔ workspace controller
 │   │   ├── globals.css         #   Tailwind v4 @theme tokens
-│   │   └── api/proxy/          #   server-side API proxy
+│   │   └── api/proxy/          #   server-side API proxy (CSRF guard, API key)
 │   ├── components/
 │   │   ├── Landing.tsx         #   hero landing page
 │   │   ├── Workspace.tsx       #   3-column results workspace
@@ -618,7 +686,8 @@ elastic-search/
 │   └── results/                #   benchmark & chaos reports
 │
 ├── scripts/                    # Shell helpers
-│   ├── preflight.sh            #   environment validation
+│   ├── preflight.sh            #   environment validation, generated passwords
+│   ├── api-user.sh             #   least-privilege ES user for the API
 │   ├── certs.sh                #   CA cert export
 │   ├── health.sh               #   cluster health check
 │   └── spotcheck.py            #   parsed vs raw validation
@@ -641,7 +710,7 @@ Run `make help` for the complete list. Key targets:
 | Category | Target | Description |
 |---|---|---|
 | **Setup** | `make install` | Create .venv, install all packages |
-| | `make preflight` | Validate Docker, disk, Python, create .env |
+| | `make preflight` | Validate Docker, disk, Python; create .env with generated passwords |
 | **Cluster** | `make up` | Start 3-node cluster, wait for green |
 | | `make up-single` | Start single-node cluster |
 | | `make up-kibana` | Start Kibana on port 5601 |
@@ -651,7 +720,9 @@ Run `make help` for the complete list. Key targets:
 | | `make ingest-full` | Ingest full corpus |
 | | `make stats` | Show per-stage statistics |
 | | `make spotcheck` | Validate 20 parsed docs |
-| **Search** | `make web` | Start Next.js dev server |
+| **Search** | `make api-user` | Create the least-privilege ES user for the API |
+| | `make api` | Start the API on 127.0.0.1:8000 |
+| | `make web` | Start Next.js dev server |
 | | `make web-build` | Build production frontend |
 | **Eval** | `make eval-pool` | Pool + auto-grade candidates |
 | | `make eval` | Compute metrics + report |
@@ -699,8 +770,11 @@ every pull request:
 | **Subject boost ^1** | Empirical sweep proved `subject^1` yields +0.021 NDCG@10 and +0.060 MRR vs `subject^3` |
 | **ML in worker threads** | `asyncio.to_thread` for embedding and reranking — drops concurrency-4 p50 from 89 ms to 74 ms |
 | **Multi-node ES client** | `ES_HOST` is comma-separated; the client round-robins and retries on another node when one dies — required for 0-failure chaos gate |
-| **Server-side API proxy** | Frontend routes through Next.js `/api/proxy/[...path]` so ES credentials never appear in client bundles |
+| **Server-side API proxy** | Frontend routes through Next.js `/api/proxy/[...path]` so the API key and address never appear in client bundles, and cross-site writes are refused |
 | **Constant fusion window** | RRF ranks a document against whatever it was fused with, so a window that grew per page made page two repeat page one — the window is now fixed at 120 (D32) |
+| **Cached fused list for later pages** | Page two and exports reuse the first page's ranking instead of re-running both legs, facets and the reranker; keyed on a tag-write counter so tag filters never go stale (D39) |
+| **Atomic tag edits** | Add/remove is applied by a painless script inside Elasticsearch, so two reviewers tagging one email both keep their change (D39) |
+| **Least privilege everywhere** | The API holds a read/tag-only ES user, ports are loopback-only, and the proxy refuses cross-site writes (D39) |
 | **Page-only highlighting** | Highlighting costs per document, so it runs as a second `ids`-filtered query over just the returned page; this is what keeps p95 under target with the wider window |
 
 See [`DECISIONS.md`](DECISIONS.md) for the complete decision log with measurements and alternatives considered.
@@ -731,6 +805,12 @@ Negative results are recorded because they are as useful as the positive ones:
   to subjects, attaching only a reply to the message it answers (D36), and the
   Attachments facet hides itself when empty. Both are properties of the CMU
   release, verified against the raw files (F1, F18).
+- **Access control is coarse.** One shared API key and a list of basic-auth
+  logins, with no roles: every signed-in reviewer can read everything and tag
+  anything. Tags record who changed them last, not a full history.
+- **A tag filter resolves to at most 10,000 emails** (it becomes an `ids`
+  filter), and says so in `warnings` when it is cut. Copying tags onto the
+  email documents would remove the cap; it needs a reindex hook (D39).
 - **The reranker loads at startup** in the background (~8 s, D34); it is opt-in
   because its gain does not hold on the test split (D35).
 

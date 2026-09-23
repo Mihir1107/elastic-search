@@ -42,11 +42,10 @@ export function ReviewActions({
     };
   }, [menu]);
 
-  const button =
-    "meta shrink-0 rounded-full border border-[var(--color-rule)] px-3 py-1 transition-colors hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]";
+  const button = "tool";
 
   return (
-    <div ref={ref} className="relative flex shrink-0 items-center gap-2">
+    <div ref={ref} className="relative flex shrink-0 items-center gap-px">
       {error && (
         <span className="meta max-w-[18ch] truncate text-[var(--color-ink)]" title={error} role="status">
           Tag not saved
@@ -57,7 +56,7 @@ export function ReviewActions({
         aria-expanded={menu}
         aria-haspopup="menu"
         disabled={count === 0}
-        className={`${button} disabled:opacity-50`}
+        className={button}
       >
         Tag page
       </button>

@@ -54,3 +54,39 @@ export function recipients(to: string[], limit = 2): string {
   if (names.length <= limit) return names.join(", ");
   return `${names.slice(0, limit).join(", ")} and ${names.length - limit} more`;
 }
+
+/** A line that starts a list item, a quote or a signature rule: never joined. */
+const STRUCTURED = /^\s*([-*•>]|\d+[.)]\s|[A-Z][\w ]{0,24}:\s|_{3,}|-{3,}|={3,})/;
+
+/**
+ * Undo the fixed-width wrapping mail clients of the era applied (~72 columns),
+ * for display only.
+ *
+ * Within a paragraph, lines are joined when they look hard-wrapped: long, and
+ * not list items, quotes or header-like lines. Anything short or structured —
+ * addresses, tables, signatures — keeps its line breaks. The original text is
+ * always one click away in the reading pane, and export and search never see
+ * this.
+ */
+export function reflow(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((para) => {
+      const lines = para.split("\n");
+      if (lines.length < 2) return para;
+      const out: string[] = [lines[0]];
+      for (let i = 1; i < lines.length; i++) {
+        const prev = out[out.length - 1];
+        const line = lines[i];
+        const wrapped =
+          lines[i - 1].trimEnd().length >= 45 &&
+          line.trim().length > 0 &&
+          !STRUCTURED.test(line) &&
+          !STRUCTURED.test(lines[i - 1]);
+        if (wrapped) out[out.length - 1] = `${prev.trimEnd()} ${line.trimStart()}`;
+        else out.push(line);
+      }
+      return out.join("\n");
+    })
+    .join("\n\n");
+}

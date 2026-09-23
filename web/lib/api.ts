@@ -46,7 +46,11 @@ async function get<T = unknown>(path: string, signal?: AbortSignal): Promise<T> 
   return res.json() as Promise<T>;
 }
 
-async function send<T = unknown>(method: "PUT" | "POST", path: string, body: unknown): Promise<T> {
+async function send<T = unknown>(
+  method: "PUT" | "POST" | "PATCH",
+  path: string,
+  body: unknown,
+): Promise<T> {
   const res = await fetch(`/api/proxy${path}`, {
     method,
     headers: { "content-type": "application/json" },
@@ -98,15 +102,23 @@ function withMockTags<T extends { id: string; tags: string[] }>(item: T): T {
   return { ...item, tags: mockTags.get(item.id) ?? item.tags };
 }
 
-export async function setTags(id: string, tags: string[]): Promise<string[]> {
+/**
+ * Add and remove tags on one email. Applied atomically by the API, so another
+ * reviewer's concurrent change to the same email is kept, not overwritten.
+ */
+export async function changeTags(id: string, add: string[], remove: string[]): Promise<string[]> {
   if (USE_MOCK) {
-    const clean = [...new Set(tags.map((t) => t.toLowerCase()))].sort();
+    const next = new Set(mockTags.get(id) ?? []);
+    add.forEach((t) => next.add(t.toLowerCase()));
+    remove.forEach((t) => next.delete(t.toLowerCase()));
+    const clean = [...next].sort();
     if (clean.length) mockTags.set(id, clean);
     else mockTags.delete(id);
     return settle(clean, 40);
   }
-  const res = await send<{ tags: string[] }>("PUT", `/emails/${encodeURIComponent(id)}/tags`, {
-    tags,
+  const res = await send<{ tags: string[] }>("PATCH", `/emails/${encodeURIComponent(id)}/tags`, {
+    add,
+    remove,
   });
   return res.tags;
 }

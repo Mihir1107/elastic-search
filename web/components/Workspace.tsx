@@ -112,6 +112,19 @@ export function Workspace(p: Props) {
             M
           </span>
         </div>
+        <AnimatePresence>
+          {(p.loading || p.loadingMore) && (
+            <motion.span
+              key="progress"
+              className="progress-line"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              aria-hidden
+            />
+          )}
+        </AnimatePresence>
       </header>
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-5 py-6 sm:px-7 lg:flex lg:min-h-0 lg:flex-col lg:pt-4 lg:pb-5">
@@ -148,7 +161,7 @@ export function Workspace(p: Props) {
             every pixel here comes out of the reading pane's height. */}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           {data && <Tabs lenses={lenses} active={p.lens} onChange={p.onLens} />}
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
             <h1 className="meta min-w-0 truncate font-normal" title={p.committed || p.draft}>
               {/* The count crossfades instead of snapping, so a facet click
                   reads as the same number changing rather than a new page. */}
@@ -190,6 +203,7 @@ export function Workspace(p: Props) {
                 Clear {plural(p.filterCount, "filter")}
               </button>
             )}
+            <div className="toolbar min-w-0">
             <RerankToggle
               on={p.rerank}
               onChange={p.onRerank}
@@ -219,8 +233,14 @@ export function Workspace(p: Props) {
                 error={p.tags.error}
               />
             )}
-            {data && <TimingNote timing={data.timing} />}
+            {/* Timing is for the operator at a desk; on a phone it costs the row. */}
+            {data && (
+              <span className="hidden sm:contents">
+                <TimingNote timing={data.timing} />
+              </span>
+            )}
             <InsightsToggle on={insights.open} onChange={insights.toggle} />
+            </div>
           </div>
         </div>
 
@@ -243,7 +263,14 @@ export function Workspace(p: Props) {
                 : "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_0px]",
             ].join(" ")}
           >
-            <section className="scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain">
+            <section
+              aria-busy={p.loading || undefined}
+              className={[
+                "scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain",
+                // The last results stay put, stepped back, until the new ones land.
+                p.loading && data ? "stale" : "fresh",
+              ].join(" ")}
+            >
               {p.loading && !data ? (
                 <Skeleton />
               ) : !data ? null : p.lens === "emails" ? (
@@ -452,21 +479,17 @@ function RerankToggle({
       aria-pressed={on}
       title={title}
       aria-label={skipped ? "Rerank on, but skipped for this query" : "Rerank"}
-      style={on && !skipped ? { color: "var(--color-surface)" } : undefined}
-      className={[
-        "meta flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors",
-        skipped
-          ? "border-dashed border-[var(--color-ink)] text-[var(--color-ink)]"
-          : on
-            ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
-            : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
-      ].join(" ")}
+      className={["tool", skipped ? "italic" : ""].join(" ")}
     >
-      <span
-        className={["size-1.5 rounded-full", state === "pending" ? "animate-pulse" : ""].join(" ")}
-        style={{
-          background: state === "applied" || state === "pending" ? "#c08a2e" : "var(--color-faint)",
+      <motion.span
+        className="size-1.5 rounded-full"
+        animate={{
+          scale: state === "applied" ? 1.25 : 1,
+          backgroundColor:
+            state === "applied" || state === "pending" ? "#c08a2e" : "var(--color-faint)",
         }}
+        transition={{ type: "spring", stiffness: 500, damping: 26 }}
+        style={state === "pending" ? { animation: "dot-pulse 1s ease-in-out infinite" } : undefined}
         aria-hidden
       />
       {skipped ? "Rerank skipped" : "Rerank"}
@@ -481,12 +504,7 @@ function InsightsToggle({ on, onChange }: { on: boolean; onChange: () => void })
       onClick={onChange}
       aria-pressed={on}
       title={on ? "Hide insights to give the email more room" : "Show insights"}
-      className={[
-        "meta hidden shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors xl:flex",
-        on
-          ? "border-[var(--color-rule-strong)] text-[var(--color-ink)]"
-          : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
-      ].join(" ")}
+      className="tool hidden xl:inline-flex"
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
         <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" stroke="currentColor" strokeWidth="1.3" />

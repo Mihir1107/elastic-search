@@ -8,6 +8,7 @@
  * two-bar signal answer the second.
  */
 
+import type React from "react";
 import { motion } from "motion/react";
 import type { EmailHit } from "@/lib/types";
 import { personName, shortDate } from "@/lib/format";
@@ -27,7 +28,8 @@ interface Props {
 
 export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave, tagsFor }: Props) {
   return (
-    <div className="card overflow-hidden">
+    // ink-sweep: each match's marker stroke is drawn in as its row arrives.
+    <div className="card ink-sweep overflow-hidden">
       {hits.map((hit, i) => (
         <Row
           key={hit.id}
@@ -65,6 +67,7 @@ function Row({
   const semanticOnly = hit.signals.bm25_rank === null && hit.signals.vector_rank !== null;
   const snippet = bodyFragment ?? hit.semantic_snippet;
   const tags = hit.topics.length ? hit.topics : hit.folder ? [hit.folder] : [];
+  const stagger = Math.min(index, 8) * 22;
 
   return (
     <motion.article
@@ -75,8 +78,10 @@ function Row({
         duration: 0.26,
         ease: [0.22, 1, 0.36, 1],
         // Stagger only the first screenful; later rows would feel sluggish.
-        delay: Math.min(index, 8) * 0.022,
+        delay: stagger / 1000,
       }}
+      // The row settles first, then its ink is drawn.
+      style={{ "--mk-delay": `${stagger + 140}ms` } as React.CSSProperties}
       className="result cursor-pointer px-4 py-3.5"
       data-active={active}
       // A clickable row needs to be reachable and operable without a mouse.
@@ -92,6 +97,14 @@ function Row({
         }
       }}
     >
+      {active && (
+        <motion.span
+          layoutId="result-rail"
+          className="result-rail"
+          transition={{ type: "spring", stiffness: 520, damping: 42 }}
+          aria-hidden
+        />
+      )}
       <div className="flex gap-3">
         <Avatar address={hit.from} name={hit.from_name} />
 
@@ -149,7 +162,7 @@ function Row({
                 />
               )}
               {hit.has_attachment && <Clip />}
-              <SignalBar signals={hit.signals} delay={Math.min(index, 8) * 22} />
+              <SignalBar signals={hit.signals} delay={stagger} />
               <button
                 onClick={(e) => {
                   e.stopPropagation();

@@ -37,6 +37,7 @@ export function useSearch(
 
   const seq = useRef(0);
   const abort = useRef<AbortController | null>(null);
+  const more = useRef<AbortController | null>(null);
   const key = JSON.stringify({ query, filters, rerank });
 
   useEffect(() => {
@@ -70,7 +71,12 @@ export function useSearch(
         });
     }, DEBOUNCE_MS);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // A superseded search (or one whose component unmounted) is cancelled,
+      // along with any "load more" that belonged to it.
+      more.current?.abort();
+    };
     // `key` captures every input; query/filters/rerank are read inside.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
@@ -82,9 +88,17 @@ export function useSearch(
 
     setState((s) => ({ ...s, loadingMore: true }));
     const params: SearchParams = { q: query, filters, rerank, page_token: token };
+    // The page belongs to the search that is on screen now. If the query
+    // changes before it lands, it must be dropped, not appended to the new
+    // query's results.
+    const id = seq.current;
+    more.current?.abort();
+    const ac = new AbortController();
+    more.current = ac;
 
     try {
-      const next = await runSearch(params);
+      const next = await runSearch(params, ac.signal);
+      if (id !== seq.current) return;
       setState((s) =>
         s.data
           ? {
@@ -100,6 +114,11 @@ export function useSearch(
           : { ...s, loadingMore: false },
       );
     } catch (e) {
+      if (id !== seq.current) return;
+      if (e instanceof Error && e.name === "AbortError") {
+        setState((s) => ({ ...s, loadingMore: false }));
+        return;
+      }
       setState((s) => ({
         ...s,
         loadingMore: false,

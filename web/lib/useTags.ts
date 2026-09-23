@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { batchTags, listTags, setTags } from "./api";
+import { batchTags, changeTags, listTags } from "./api";
 import type { TagCount } from "./types";
 
 /** The marks a document review starts with; any other tag name also works. */
@@ -34,13 +34,18 @@ export function useTags() {
     [overrides],
   );
 
-  /** Replace one email's tags; `current` is what to restore if the API refuses. */
+  /**
+   * Move one email from `current` to `next` tags. Sent as the difference, not
+   * the whole list, so a tag another reviewer added meanwhile survives.
+   */
   const set = useCallback(
     async (id: string, next: string[], current: string[]) => {
       setError(null);
       setOverrides((o) => ({ ...o, [id]: next }));
+      const add = next.filter((t) => !current.includes(t));
+      const remove = current.filter((t) => !next.includes(t));
       try {
-        const stored = await setTags(id, next);
+        const stored = await changeTags(id, add, remove);
         setOverrides((o) => ({ ...o, [id]: stored }));
         refresh();
       } catch (e) {

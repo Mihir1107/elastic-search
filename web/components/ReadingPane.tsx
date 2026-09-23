@@ -8,12 +8,12 @@
  * switching never costs you your place in the results.
  */
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
-import { longDate, personName, plural, shortDate } from "@/lib/format";
+import { longDate, personName, plural, reflow, shortDate } from "@/lib/format";
 import { PRESET_TAGS } from "@/lib/useTags";
 import { Avatar } from "./Avatar";
 
@@ -84,9 +84,11 @@ export function ReadingPane({
 
   useEffect(() => setPortalReady(true), []);
 
-  // A different email, or none, starts collapsed.
+  // A different email, or none, starts collapsed and at its first line.
   useEffect(() => {
     setExpanded(false);
+    scrollFraction.current = 0;
+    bodyRef.current?.scrollTo({ top: 0 });
   }, [hit?.id]);
 
   const toggle = useCallback((next: boolean) => {
@@ -228,11 +230,19 @@ export function ReadingPane({
         className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
         {/* A measure, not the full overlay width: long lines are hard to read. */}
-        <div className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}>
+        {/* Keyed by email and tab: switching settles the new text in rather
+            than swapping it under the reader's eye. */}
+        <motion.div
+          key={`${hit.id}-${tab}`}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}
+        >
           {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
           {!error && tab === "message" && <Message doc={doc} tags={tags} onSetTags={onSetTags} />}
           {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}
-        </div>
+        </motion.div>
       </motion.div>
     </motion.div>
   );
@@ -382,6 +392,35 @@ function IconButton({
   );
 }
 
+/**
+ * The message text, reflowed for reading by default. The original wrapping can
+ * matter to a reviewer (a table, an address block), so it is one click away.
+ */
+function Body({ text }: { text: string }) {
+  const [original, setOriginal] = useState(false);
+  const flowed = useMemo(() => reflow(text), [text]);
+  const changed = flowed !== text;
+
+  return (
+    <div className="mt-5">
+      {changed && (
+        <div className="mb-2 flex justify-end">
+          <button
+            onClick={() => setOriginal((o) => !o)}
+            aria-pressed={original}
+            className="meta rounded-full px-2 py-0.5 text-[0.75rem] transition-colors hover:bg-[var(--color-sunk)] hover:text-[var(--color-ink)]"
+          >
+            {original ? "Reflow for reading" : "Show original line breaks"}
+          </button>
+        </div>
+      )}
+      <div className={original ? "prose-mail prose-mail-raw" : "prose-mail prose-letter"}>
+        {original ? text : flowed}
+      </div>
+    </div>
+  );
+}
+
 function Message({
   doc,
   tags,
@@ -418,7 +457,7 @@ function Message({
 
       <TagBar tags={tags} onChange={onSetTags} />
 
-      <div className="prose-mail mt-5">{doc.body}</div>
+      <Body text={doc.body} />
 
       {doc.quoted_text && (
         <details className="mt-5 border-t border-[var(--color-rule)] pt-4">

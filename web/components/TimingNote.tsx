@@ -44,7 +44,7 @@ export function TimingNote({ timing }: { timing: Timing }) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="meta num rounded-full border border-[var(--color-rule)] px-3 py-1 transition-colors hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]"
+        className="tool num"
       >
         {ms(timing.total_ms)}
       </button>

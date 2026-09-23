@@ -99,7 +99,10 @@ def label(
     queries = {str(q["id"]): q for q in harness.load_queries(QUERIES)}
 
     judgments = list(judge.load_judgments(QRELS))
-    done = {(j.query_id, j.doc_id) for j in judgments}
+    # LLM labels are provisional: they are offered for review with the LLM's
+    # grade as the default, and a human answer replaces them.
+    done = {(j.query_id, j.doc_id) for j in judgments if j.source == "human"}
+    llm_grades = {(j.query_id, j.doc_id): j.grade for j in judgments if j.source == "llm"}
 
     todo: list[tuple[str, str]] = []
     for qid, doc_ids in payload["pools"].items():
@@ -128,7 +131,10 @@ def label(
         typer.echo(f"  subject: {doc.get('subject', '')!r}")
         typer.echo(f"  body   : {body}")
         default = "s"
-        if prelabel:
+        if (qid, doc_id) in llm_grades:
+            default = str(llm_grades[(qid, doc_id)])
+            typer.secho(f"  llm grade: {default}", fg=typer.colors.MAGENTA)
+        elif prelabel:
             try:
                 suggested = prelabel_mod.suggest_grade(query, doc)
             except prelabel_mod.PrelabelUnavailable as exc:
@@ -180,23 +186,35 @@ def run(
     )
     by_id = {str(q["id"]): q for q in queries}
     auto_ids = {qid for qid in judged_ids if by_id.get(qid, {}).get("auto")}
+    human_ids = {j.query_id for j in judgments if j.source == "human"}
+    llm_ids = {j.query_id for j in judgments if j.source == "llm"} - human_ids
     coverage = {
         "total_queries": len(queries),
         "by_category": dict(Counter(str(q["category"]) for q in queries)),
         "judged_queries": len(judged_ids),
         "judged_ids": judged_ids,
         "auto_queries": len(auto_ids),
-        "human_queries": len(set(judged_ids) - auto_ids),
+        "human_queries": len(human_ids - auto_ids),
+        "llm_queries": len(llm_ids - auto_ids),
         "unjudged_queries": len(queries) - len(judged_ids),
         "judgments": len(judgments),
         "auto_judgments": sum(1 for j in judgments if j.source.startswith("auto")),
         "human_judgments": sum(1 for j in judgments if j.source == "human"),
+        "llm_judgments": sum(1 for j in judgments if j.source == "llm"),
     }
 
     results: dict[str, dict[str, float]] = {}
     per_category: dict[str, dict[str, dict[str, float]]] = {}
+    per_split: dict[str, dict[str, dict[str, float]]] = {}
     for method, per_query in runs.items():
         results[method] = evaluate_run(per_query, qrels)
+        per_split[method] = {
+            split: evaluate_run(
+                {q: r for q, r in per_query.items() if by_id.get(q, {}).get("split") == split},
+                qrels,
+            )
+            for split in ("tune", "test")
+        }
         buckets: dict[str, dict[str, list[str]]] = {}
         for qid, ranked in per_query.items():
             category = str(by_id.get(qid, {}).get("category", "unknown"))
@@ -208,11 +226,19 @@ def run(
     RESULTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     out = RESULTS / f"{stamp}.md"
-    out.write_text(report.render_report(results, per_category, coverage, queries))
+    out.write_text(report.render_report(results, per_category, coverage, queries, per_split))
 
     if write_baseline:
         BASELINE.write_text(
-            json.dumps({"generated": stamp, "coverage": coverage, "results": results}, indent=2)
+            json.dumps(
+                {
+                    "generated": stamp,
+                    "coverage": coverage,
+                    "results": results,
+                    "splits": per_split,
+                },
+                indent=2,
+            )
             + "\n"
         )
 

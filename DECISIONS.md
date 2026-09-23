@@ -561,13 +561,34 @@ default (D25), so the API does not pay that at startup; the cost lands on whoeve
 first. Left lazy deliberately — an off-by-default feature should not slow every boot — but the
 first-use latency is real and the UI shows a pending state through it.
 
-## D33 — Mangled smart punctuation is repaired at ingest, and defensively at display
-The CALO release stores a right single quote as a control byte plus an ASCII tail, so "Enron's"
-arrives as `Enron\x01,s` and paints as "Enron ,s". Measured at **131 of 20,001 documents**.
-`ingest.parse.clean_text` repairs it at the source so the indexed text is right; `lib/format.ts`
-repeats the repair for display because the serving index predates the parser fix. A full reindex
-for 0.65% of documents was not judged worth ~50 minutes of re-embedding — the display fix makes
-it invisible now, and the next ingest fixes it properly.
+## D33 — Lotus Notes-mangled punctuation is repaired at ingest, and the index was repaired in place
+The CALO release stores smart punctuation as a control byte plus an ASCII tail, so "Enron's"
+arrives as `Enron\x01,s` and paints as "Enron ,s". The first fix knew only the apostrophe, and
+mapped `\x018` to it wrongly: read in context across the 52k corpus, `\x01&…\x018` wraps quoted
+phrases ("reality checks"), so `\x018` is a right double quote. The table in
+`ingest.parse._MOJIBAKE` now covers every tail with a clear meaning (’ ‘ “ ” — • ™ and a space),
+each annotated with its count and an example; anything unlisted still loses its control byte.
+
+The serving index predated the parser fix, so the UI carried a display-time copy of the repair.
+Instead of a ~50-minute full reindex, the **790 affected documents** were repaired in place:
+subject, body and quoted text cleaned, chunks re-embedded, partial updates by id. A scan of all
+52,219 indexed documents afterwards found **0** control bytes, and the display-time patch in
+`web/lib/format.ts` and `Marker.tsx` was deleted.
+
+Checking that a reindex reproduces this found two gaps, both fixed in ingest:
+- **Subjects were never cleaned.** `clean_text` ran on bodies only; 12 subjects carry the damage.
+- **The embed stage resumed by id.** It skipped any id already in `embedded.jsonl`, so a re-run
+  re-indexed old rows: old text, old `thread_id`s, and metadata from whatever earlier run it had
+  resumed from. The serving index shows exactly that. 462 documents carry a lower
+  `duplicate_count` (and fewer mailboxes/folders) than the pipeline computes, and 94 carry a
+  stale `thread_id`, left over from the smaller run that `emails-v2`'s embed resumed from. The
+  stage now reuses vectors only for unchanged text, always rebuilds rows from fresh input, and
+  swaps in a `.partial` output on completion.
+
+Re-running parse → embed over the `emails-v2` subset then matched the repaired index by
+`message_id` in text and chunks. The exceptions were 9 whitespace-only cases where a different
+copy of a duplicate is kept. Because email ids are content hashes, the 520 repaired emails get
+new ids on reindex.
 
 ## D34 — A skipped rerank says so, and the cross-encoder warms at startup
 - **Report:** "the Rerank button does nothing." Two causes, both real.
@@ -585,3 +606,193 @@ it invisible now, and the next ingest fixes it properly.
   API reported ready and the reranker finished ~8 s later, and the first rerank after warmup
   took **226 ms** instead of ~8 s. F19's "left lazy deliberately" is reversed: an
   off-by-default feature with a prominent button still has to respond when pressed.
+
+## D35 — Relevance fixes from an external review, each measured on a tune/test split
+An outside review proposed ten changes. The relevance ones were measured, not adopted on
+argument. Two things had to change first.
+
+**The measurement.** All 12 conceptual queries were unlabelled, so nothing about the vector leg or
+the reranker could be decided, and the 38 judged queries were used for tuning *and* reporting.
+18 conceptual queries were added (30 in all), and every category was split alternately into
+`tune` and `test` (`split:` in `queries.yaml`). Settings are chosen on `tune`, and `test` is the
+number to believe. The conceptual queries were labelled against the `eval/prelabel.py` rubric by
+an LLM (Claude), 1,031 judgments recorded with source `"llm"`. They are provisional: a human label
+always wins (`judge._authority`), and `make eval-label` offers each LLM label for review with
+its grade as the default. For the rule-graded queries, every retrieved document was graded by its
+rule rather than only the pooled top 20, so no variant was penalised for surfacing unjudged mail.
+
+**Results** (NDCG@10, all 68 queries, fully judged; tune / test in brackets):
+
+| change | all | conceptual | typo | exact-lookup | verdict |
+|---|---|---|---|---|---|
+| hybrid, before | 0.735 (0.706 / 0.764) | 0.520 | 0.763 | 0.874 | |
+| + phrase filter on the vector leg | | | | 0.920 | **adopted** |
+| + spelling correction for the embedder | 0.750 (0.735 / 0.765) | 0.520 | 0.832 | 0.920 | **adopted** |
+| + `minimum_should_match: "2<50%"` | **0.765** (0.751 / 0.779) | 0.533 | 0.911 | 0.920 | **adopted** |
+| `"2<75%"` instead (the review's value) | 0.748 (0.740 / 0.756) | 0.494 | 0.911 | 0.920 | rejected |
+| kNN leg weighted 0.5 on precise queries | 0.932* | | 0.832 | 0.915 | rejected |
+| kNN similarity floor 0.62 / 0.66 | | 0.500 / 0.496 vs 0.500 | | | rejected |
+| rerank with `bge-reranker-base` | | 0.476 vs 0.500 | | | rejected |
+
+\* rule-graded queries only, measured before the conceptual labels existed; no gain over the
+phrase filter alone.
+
+- **Phrase filter.** `build_knn` carried the field filters but not a quoted phrase, so for
+  `"force majeure"` the vector leg fused in neighbours that lacked the phrase. That is why hybrid
+  trailed BM25 on exact lookups. The phrase now filters both legs (`builder.phrase_filters`).
+- **Spelling correction** (`search/spelling.py`). BM25 survives `califronia` through fuzziness,
+  but the embedder does not. A term suggester rides on the BM25 request, and the corrected text
+  is what gets embedded. Every guard exists because the unguarded version failed on real queries:
+  - The review's `suggest_mode: popular` on `body` rewrote correct words ("hiding" → "hiring",
+    "taking" → "trading", "Fastow" → "factor") and returned stems.
+  - `missing` mode still corrected real words absent from the corpus ("crashing" → "crushing",
+    "spiking" → "speaking").
+  - The final version uses `body.exact`, `missing`, `max_edits: 1`, and never corrects a word the
+    embedding model holds as one vocabulary token. It corrects exactly the 8 typo queries and none
+    of the other 60.
+  - The correction is reported (`understood.corrections`) and shown in the results header. It
+    also made the reranker useful on typos (hybrid+rerank typo 0.717 → 0.961), since the
+    cross-encoder now reads the corrected text too.
+- **`minimum_should_match`.** Plain OR let `california power crisis` match anything with
+  "power", and the total and every facet counted that set. With `"2<50%"`, one or two terms must
+  all match and longer queries need half. `"2<75%"` over-constrains natural-language queries.
+  Caveat: with `best_fields`, the setting applies per field, so the terms must co-occur in one
+  field.
+- **Similarity floor and leg weights: rejected.** bge-small cosines are compressed. Even a genuine
+  query's rank-120 neighbour scores 0.61–0.68, while nonsense ("zzqx flurb") peaks at 0.63. So no
+  global floor removes junk without also cutting good tails.
+- **Reranker: unchanged, still opt-in.** The review suggested `bge-reranker-base`; it measured
+  worse than not reranking. The current MiniLM cross-encoder helps overall (0.793 vs 0.766) and
+  strongly on tune, but is slightly worse on test (0.769 vs 0.778). That doesn't justify turning
+  it on by default, and doesn't justify removing it either (the review's test).
+
+**Lean retrieval.** Both legs used to fetch `_source` with full bodies for 120 candidates each
+(~380 KB per leg) to show ~20. They now return ids only. The page is hydrated by an id-filtered
+search that highlights just the keyword hits, plus a concurrent multi-get for the rest. Measured
+sequentially in-process, two runs each against the old code: retrieval legs −3 to −4 ms each,
+wall p50 −2 to −4 ms, p95 −3 to −5 ms. Real but modest; the review predicted a noticeable p95
+drop, and it isn't one at this corpus size. A first version that highlighted every page
+document was *slower* (hydration +26 ms p50), which is why keyword hits and the rest are split.
+
+## D36 — The subject-fallback thread must be a reply to the message it joins
+This corpus has no reply headers (`linked_by_headers: 0`), so the subject fallback builds every
+thread. It linked consecutive same-subject messages that shared *any* participant within 30 days.
+The four largest "threads" were broadcasts from a single sender:
+- 343 hourly "Schedule Crawler: HourAhead Failure" alerts over two months
+- a newsletter, 157 messages over five months
+- a weekly report, 44 messages over nine months
+
+One person's replies to 18 separate congratulations were also chained into one 47-message
+thread.
+
+A message now joins an earlier one only when its subject carries a `Re:`/`Fw:` prefix, and when
+it answers that message. The strongest signal is that it's addressed to the earlier sender. Weaker
+signals are that its sender received the earlier message, or that it's the same sender following
+up with the same people or forwarding their own message. The review's alternative, not linking
+through senders with more than 20 same-subject messages, would have split long genuine threads
+from heavy correspondents and missed the congratulations case. Before accepting the rule, a
+sample of links it broke was read. That found two false splits, a sender's own follow-up and
+their own forward, and the rule was widened to keep both.
+
+Result: the largest thread went from 343 to 40 (a genuine back-and-forth), and multi-message
+threads from 7,464 to 5,107. Applied to the serving index as a `thread_id`-only partial update
+(7,050 documents, no re-embedding).
+
+## D37 — Review tags live in their own index; export follows the query's meaning
+eDiscovery reviewers mark documents and hand sets on; Ledger could only find them. Tags
+(`relevant`, `privileged`, `hot`, or any `a-z0-9-` name) are stored in a separate `ledger-tags`
+index, one document per tagged email, not on the email documents. Ingest builds a new index
+version and swaps the alias, which would silently drop tags stored on the emails. Email ids are
+content hashes, so a tag survives a reindex of the same mail, and the evidence stays unchanged by
+review.
+
+- **API.** `PUT /emails/{id}/tags` replaces an email's tags. `POST /tags/batch` adds or removes
+  tags for up to 500 emails. `GET /tags` returns counts. `/search` and `/export` take `tag=`, which
+  resolves to an ids filter (capped at 10,000, Elasticsearch's result window, with a warning).
+- **Export** (`GET /export`) takes the same parameters as `/search`, resolved by the same
+  `resolve_filters`. A filter-only query exports the complete set (up to 50,000 rows, via
+  `search_after`), which is the tag-then-export workflow. A text query exports the ranked list the
+  reviewer can page through. Exporting "every keyword match" would silently mean something other
+  than what was on screen. The `X-Ledger-Export-Mode` and `-Truncated` headers say which, and
+  whether the cap applied.
+- **CSV injection.** Email text is untrusted, so a cell starting with `= + - @` is quote-prefixed
+  and can never execute as a spreadsheet formula.
+- **UI.** Preset toggles and custom tags in the reading pane, outlined tag chips on result rows, a
+  Review tags filter in Insights (counts labelled as corpus-wide, unlike the other facets), and
+  "Tag page" and "Export CSV" in the results header.
+
+## D38 — The serving index is `emails-v3`, rebuilt from the fixed pipeline
+`emails-v2` had drifted from what the pipeline computes. Some of that came from in-place repairs
+(D33, D36). The rest was stale rows from the old embed resume: 462 documents with too-low
+`duplicate_count` and incomplete mailboxes/folders, and 94 stale `thread_id`s. After the ingest
+fixes, parse → embed was re-run over the same 100k-message subset and indexed as `emails-v3`
+(`INDEX_VERSION=v3`). The alias moved only after the stage's count and smoke checks passed.
+
+Verified after the flip: all 52,219 documents are field-for-field identical to the pipeline
+output, including chunk text, with no control bytes. All API tests pass against it.
+`emails-v2` and snapshot `emails-v2-20260921t144454` remain as the rollback: one alias move.
+
+**Eval.** 519 repaired emails have new content-hash ids, so 52 judgments were re-keyed by
+`message_id`, and 7 newly surfaced documents were labelled. Hybrid NDCG@10 is 0.7613 against
+0.7673 on `emails-v2`, each index scored against judgments keyed to its own ids. The per-query
+changes are two-sided (14 down, 14 up, mostly conceptual queries). That fits a rebuilt
+approximate kNN graph and redistributed per-shard BM25 statistics, not a loss: the text is
+unchanged apart from the repairs. The baseline is re-written for `emails-v3`.
+
+
+## D39 — Hardening and serving-path fixes from a code review
+A review found one exploitable issue, a set of correctness bugs, and avoidable work on the hot
+path. Each fix below has a test.
+
+**Security.**
+- *CSRF through the web proxy.* The proxy stamped `application/json` on every write it
+  forwarded. A `text/plain` form POST from any site (a simple request, so no CORS preflight)
+  therefore reached `/tags/batch` as valid JSON and could strip `privileged` tags. Writes must now
+  be `application/json` and same-origin (`Sec-Fetch-Site`, falling back to `Origin`). Path
+  segments are re-encoded, so `%3F` in an id cannot smuggle in a query string.
+- *Access.* The API now honours an optional `LEDGER_API_KEY` (`X-API-Key`), which the proxy
+  adds server-side; `/livez` stays open. The web tier has optional basic auth
+  (`LEDGER_BASIC_AUTH`), and the signed-in name is forwarded as `X-Ledger-User`, so tags record
+  `updated_by`. Any client-sent copy of that header is dropped first.
+- *Least privilege.* `make api-user` creates `ledger_api`: read on the email indices, write on
+  the tags index, and cluster `monitor`. The API no longer runs as `elastic`.
+- *Exposure.* Compose publishes ES and Kibana on 127.0.0.1 only. Preflight generates passwords
+  for a new `.env` and warns about `changeme`. `/docs` and `/openapi.json` are off by default.
+
+**Correctness.**
+- A malformed `tag=` filter was a 500. It is now a 422, as are more than 16 values for any
+  facet parameter, and oversized tag or batch bodies.
+- `/suggest` counted people over emails whose *subject* matched the prefix, because the
+  aggregation shared the subject query. `kenneth.lay` suggested no one, and `jeff.skilling`
+  showed 1 email instead of 66. People and subjects are now separate searches in one `msearch`,
+  and no regex is built from input.
+- Tag edits from the UI use `PATCH /emails/{id}/tags` with add/remove, applied by the same
+  painless script as a batch. A concurrent reviewer's edit is kept rather than overwritten.
+  The script also enforces the 16-tag cap.
+- "Load more" could append the previous query's page to a new query's results. It is now
+  sequence-guarded and abortable.
+- A ranked export reports `truncated: true` when matches exceed the fusion window. A failure
+  mid-stream writes an `ERROR` row instead of ending the file silently.
+- Thread messages get display names and tags, like `/emails/{id}`.
+- Ingest moves a checksum-failed archive aside instead of failing every later run. It also
+  restores the index's own refresh interval and replica count after a bulk load (replicas are
+  off during it).
+
+**Performance.** A first page still runs the full pipeline, so benchmarks and evaluation
+measure real work.
+- Embedding the query now overlaps the BM25 request. Only a spelling-corrected query is
+  embedded again.
+- Query vectors are cached (LRU). Model forward passes are bounded by a semaphore
+  (`MODEL_CONCURRENCY`) instead of competing in the thread pool.
+- Later pages and exports reuse the first page's fused list (TTL cache, keyed on query,
+  filters, method, rerank and a tag-write generation, so a tag change is never hidden).
+- Sequential spot check, 30 fresh queries: page 1 p50 143 → 112 ms and p95 192 → 144 ms;
+  page 2 p50 100 → 38 ms.
+
+**Not done here, deliberately.**
+- *Tags stay in their own index.* Copying them onto the email documents would make tag filters
+  exact and uncapped, but it needs a reindex hook.
+- *Vector quantization (`int8_hnsw`/`bbq_hnsw`) is left alone.* It changes recall, so it goes
+  through the eval gate on the next index version.
+- *No completion index for people suggestions yet.*
+- *Dedupe still holds the whole corpus in memory.* It fits at 100k messages.

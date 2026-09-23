@@ -18,6 +18,7 @@ import { CollectionsView, HistoryView, SavedView } from "@/components/Library";
 import type { Lens } from "@/components/Tabs";
 import { useSearch } from "@/lib/useSearch";
 import { useHistory, useSaved, type View } from "@/lib/useLocal";
+import { useTags } from "@/lib/useTags";
 import { compactFilters, countFilters, isEmpty } from "@/lib/query";
 import { getEmail, getHealth } from "@/lib/api";
 import type { EmailHit, Health, SearchFilters } from "@/lib/types";
@@ -36,6 +37,7 @@ export default function Page() {
 
   const { saved, toggle: toggleSave, isSaved } = useSaved();
   const { history, record, clear: clearHistory } = useHistory();
+  const tags = useTags();
 
   const searching = committed.length > 0 || countFilters(facetFilters) > 0;
   const filters = useMemo(() => compactFilters(facetFilters), [facetFilters]);
@@ -215,6 +217,7 @@ export default function Page() {
               view={view}
               onView={changeView}
               savedCount={saved.length}
+              tags={tags}
             />
           ) : view === "saved" ? (
             <SavedView

@@ -8,6 +8,7 @@ from app.search.builder import (
     build_bm25_query,
     build_filters,
     build_knn,
+    phrase_filters,
 )
 from app.search.parser import FUZZINESS, parse
 
@@ -40,12 +41,19 @@ def test_only_after_produces_an_open_ended_range() -> None:
     assert "gte" in rng and "lte" not in rng
 
 
-def test_bm25_applies_length_scaled_fuzziness_and_field_boosts() -> None:
+def test_bm25_applies_length_scaled_fuzziness_and_the_given_fields() -> None:
     query = build_bm25_query(parse("raptor partnership"), [])
     mm = query["bool"]["must"][0]["multi_match"]
     assert mm["fields"] == BM25_FIELDS
-    assert "subject^3" in mm["fields"]
     assert mm["fuzziness"] == FUZZINESS
+    tuned = build_bm25_query(parse("raptor"), [], ["subject^2", "body"])
+    assert tuned["bool"]["must"][0]["multi_match"]["fields"] == ["subject^2", "body"]
+
+
+def test_builder_fallback_fields_match_the_configured_default() -> None:
+    from app.config import Settings
+
+    assert Settings.model_fields["bm25_fields"].default == BM25_FIELDS
 
 
 def test_phrases_become_phrase_clauses_on_exact_subfields() -> None:
@@ -91,3 +99,25 @@ def test_subject_operator_becomes_a_subject_match_filter() -> None:
 
 def test_best_highlight_ignores_unknown_fields() -> None:
     assert best_highlight({"some.other.field": ["x"]}) == []
+
+
+def test_free_text_is_or_unless_minimum_should_match_is_given() -> None:
+    parsed = parse("california power crisis")
+    plain = build_bm25_query(parsed, [])["bool"]["must"][0]["multi_match"]
+    strict = build_bm25_query(parsed, [], minimum_should_match="2<50%")["bool"]["must"][0]
+    assert "minimum_should_match" not in plain
+    assert strict["multi_match"]["minimum_should_match"] == "2<50%"
+
+
+def test_phrase_filters_require_each_phrase_on_the_exact_subfields() -> None:
+    filters = phrase_filters(parse('"force majeure" "credit rating" gas'))
+    assert len(filters) == 2
+    for clause, phrase in zip(filters, ("force majeure", "credit rating"), strict=True):
+        should = clause["bool"]["should"]
+        assert clause["bool"]["minimum_should_match"] == 1
+        assert {next(iter(c["match_phrase"])) for c in should} == {"subject.exact", "body.exact"}
+        assert should[1]["match_phrase"]["body.exact"] == phrase
+
+
+def test_phrase_filters_are_empty_without_phrases() -> None:
+    assert phrase_filters(parse("force majeure")) == []

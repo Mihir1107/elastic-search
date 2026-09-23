@@ -55,17 +55,38 @@ export function recipients(to: string[], limit = 2): string {
   return `${names.slice(0, limit).join(", ")} and ${names.length - limit} more`;
 }
 
+/** A line that starts a list item, a quote or a signature rule: never joined. */
+const STRUCTURED = /^\s*([-*•>]|\d+[.)]\s|[A-Z][\w ]{0,24}:\s|_{3,}|-{3,}|={3,})/;
+
 /**
- * Repair the CALO corpus's mangled smart punctuation for display.
+ * Undo the fixed-width wrapping mail clients of the era applied (~72 columns),
+ * for display only.
  *
- * The raw maildir stores a right single quote as a control byte plus an ASCII
- * tail, so "Enron's" arrives as "Enron\x01,s" and paints as "Enron ,s". The
- * ingest parser now repairs this at the source, but the serving index predates
- * that fix, so the UI cleans what it is given. Harmless once the index is
- * rebuilt — there is simply nothing left to replace.
+ * Within a paragraph, lines are joined when they look hard-wrapped: long, and
+ * not list items, quotes or header-like lines. Anything short or structured —
+ * addresses, tables, signatures — keeps its line breaks. The original text is
+ * always one click away in the reading pane, and export and search never see
+ * this.
  */
-export function cleanText(text: string): string {
+export function reflow(text: string): string {
   return text
-    .replace(/\u0001[,'8]/g, "’")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "");
+    .split(/\n{2,}/)
+    .map((para) => {
+      const lines = para.split("\n");
+      if (lines.length < 2) return para;
+      const out: string[] = [lines[0]];
+      for (let i = 1; i < lines.length; i++) {
+        const prev = out[out.length - 1];
+        const line = lines[i];
+        const wrapped =
+          lines[i - 1].trimEnd().length >= 45 &&
+          line.trim().length > 0 &&
+          !STRUCTURED.test(line) &&
+          !STRUCTURED.test(lines[i - 1]);
+        if (wrapped) out[out.length - 1] = `${prev.trimEnd()} ${line.trimStart()}`;
+        else out.push(line);
+      }
+      return out.join("\n");
+    })
+    .join("\n\n");
 }

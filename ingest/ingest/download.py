@@ -157,7 +157,14 @@ def download(
     if settings.enron_sha256:
         if digest != settings.enron_sha256:
             stats.fail("checksum-mismatch")
-            msg = f"checksum mismatch: expected {settings.enron_sha256}, got {digest}"
+            # Move it aside: left in place, every later run would skip the
+            # download ("already present") and fail this check forever.
+            bad = archive.with_name(archive.name + ".bad")
+            archive.replace(bad)
+            msg = (
+                f"checksum mismatch: expected {settings.enron_sha256}, got {digest}; "
+                f"moved the archive to {bad} -- re-run to download it again"
+            )
             raise ValueError(msg)
         stats.extra["checksum_verified"] = True
     else:

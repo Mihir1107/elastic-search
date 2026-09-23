@@ -24,7 +24,7 @@ class Judgment:
     query_id: str
     doc_id: str
     grade: int
-    source: str  # "auto:<kind>" or "human"
+    source: str  # "auto:<kind>", "llm" (pending human review) or "human"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -138,13 +138,22 @@ def load_judgments(path: Path) -> list[Judgment]:
     return out
 
 
+def _authority(source: str) -> int:
+    """Which label wins for one pair: human over LLM over rule."""
+    if source == "human":
+        return 2
+    if source == "llm":
+        return 1
+    return 0
+
+
 def save_judgments(path: Path, judgments: Iterable[Judgment]) -> int:
-    """Write judgments, human labels winning over auto ones for the same pair."""
+    """Write judgments; for the same pair a human label beats an LLM one beats a rule."""
     best: dict[tuple[str, str], Judgment] = {}
     for judgment in judgments:
         key = (judgment.query_id, judgment.doc_id)
         existing = best.get(key)
-        if existing is None or (existing.source.startswith("auto") and judgment.source == "human"):
+        if existing is None or _authority(judgment.source) > _authority(existing.source):
             best[key] = judgment
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = sorted(best.values(), key=lambda j: (j.query_id, j.doc_id))

@@ -102,6 +102,12 @@ test-integration:  ## Integration tests (needs Docker for testcontainers)
 test-all:  ## All tests
 	$(UV) run pytest
 
+api:  ## Run the search API on 127.0.0.1:8000
+	$(UV) run uvicorn app.main:app --app-dir api --host 127.0.0.1 --port 8000
+
+api-user:  ## Create the least-privilege ES user the API runs as (writes .env)
+	scripts/api-user.sh
+
 web-install:  ## Install the frontend dependencies (web/)
 	cd web && npm ci
 
@@ -114,4 +120,4 @@ web-build:  ## Production build of the frontend
 web-check:  ## Typecheck the frontend
 	cd web && npm run typecheck
 
-.PHONY: bench chaos snapshot snapshots restore help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all
+.PHONY: api api-user bench chaos snapshot snapshots restore help preflight install up up-single up-kibana certs health down ingest-dev ingest-full spotcheck stats eval-pool eval-label eval eval-baseline eval-check lint format format-check typecheck test test-integration test-all

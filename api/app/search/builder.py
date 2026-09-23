@@ -14,8 +14,10 @@ from typing import Any
 
 from app.search.parser import FUZZINESS, ParsedQuery, is_address
 
-#: subject is boosted; from/to .text let a name match without an address.
-BM25_FIELDS = ["subject^3", "body", "from.text", "to.text"]
+#: Fallback when no field list is passed; the API always passes
+#: ``Settings.bm25_fields``, where the (un)boosting was tuned (D24). from/to
+#: .text let a name match without an address.
+BM25_FIELDS = ["subject", "body", "from.text", "to.text"]
 
 #: Cap how much of a body the highlighter re-analyses. Highlighting is by far the
 #: most expensive part of a search (measured: ~1.9s for 200 docs vs 45ms without),
@@ -93,6 +95,9 @@ class StructuredFilters:
     after: date | None = None
     before: date | None = None
     has_attachment: bool | None = None
+    #: Review tags (any of them). They live in a separate index, so the service
+    #: resolves them to an ids filter; ``build_structured_filters`` ignores them.
+    tags: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
         return not (
@@ -103,6 +108,7 @@ class StructuredFilters:
             or self.after
             or self.before
             or self.has_attachment is not None
+            or self.tags
         )
 
 
@@ -135,40 +141,53 @@ def build_structured_filters(f: StructuredFilters) -> list[dict[str, Any]]:
     return filters
 
 
+def _phrase_clause(phrase: str, subject_boost: float = 1) -> dict[str, Any]:
+    """The phrase must appear verbatim in the subject or the body."""
+    return {
+        "bool": {
+            "should": [
+                {"match_phrase": {"subject.exact": {"query": phrase, "boost": subject_boost}}},
+                {"match_phrase": {"body.exact": phrase}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
+def phrase_filters(query: ParsedQuery) -> list[dict[str, Any]]:
+    """Quoted phrases as hard filters, for the vector leg.
+
+    A quoted phrase is a requirement, not a hint. The BM25 leg enforces it in
+    ``must``; the vector leg has no notion of it, so without this every one of
+    its neighbours -- none of which need contain the phrase -- would be fused in
+    beside the documents that do.
+    """
+    return [_phrase_clause(phrase) for phrase in query.phrases]
+
+
 def build_bm25_query(
     query: ParsedQuery,
     filters: list[dict[str, Any]],
     fields: list[str] | None = None,
+    minimum_should_match: str | None = None,
 ) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
 
     if query.terms:
-        must.append(
-            {
-                "multi_match": {
-                    "query": query.text,
-                    "fields": fields or BM25_FIELDS,
-                    "type": "best_fields",
-                    # AUTO:5,8 -> exact below 5 chars, then 1 then 2 edits.
-                    "fuzziness": FUZZINESS,
-                    "prefix_length": 1,
-                    "max_expansions": 50,
-                }
-            }
-        )
+        multi_match: dict[str, Any] = {
+            "query": query.text,
+            "fields": fields or BM25_FIELDS,
+            "type": "best_fields",
+            # AUTO:5,8 -> exact below 5 chars, then 1 then 2 edits.
+            "fuzziness": FUZZINESS,
+            "prefix_length": 1,
+            "max_expansions": 50,
+        }
+        if minimum_should_match:
+            multi_match["minimum_should_match"] = minimum_should_match
+        must.append({"multi_match": multi_match})
 
-    for phrase in query.phrases:
-        must.append(
-            {
-                "bool": {
-                    "should": [
-                        {"match_phrase": {"subject.exact": {"query": phrase, "boost": 3}}},
-                        {"match_phrase": {"body.exact": phrase}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
-        )
+    must.extend(_phrase_clause(phrase, subject_boost=3) for phrase in query.phrases)
 
     if not must:
         must.append({"match_all": {}})

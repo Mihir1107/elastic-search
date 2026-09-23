@@ -20,13 +20,17 @@ import binascii
 import hashlib
 import json
 import logging
-from time import perf_counter
+from collections import OrderedDict
+from collections.abc import Hashable
+from dataclasses import dataclass, replace
+from time import monotonic, perf_counter
 from typing import Any, Literal
 
 from elasticsearch import AsyncElasticsearch
 
 from app.config import Settings
 from app.models import (
+    Correction,
     Facet,
     SearchHit,
     SearchResponse,
@@ -43,11 +47,16 @@ from app.search.builder import (
     build_filters,
     build_knn,
     build_structured_filters,
+    phrase_filters,
 )
-from app.search.embedder import embed_query
+from app.search.embedder import embed_query, is_known_word
 from app.search.fusion import FusedHit, fuse
 from app.search.parser import ParsedQuery, parse
 from app.search.rerank import rerank as rerank_hits
+from app.search.spelling import build_suggest, corrected_text
+from app.search.spelling import corrections as find_corrections
+from app.tags import generation as tag_generation
+from app.tags import get_tags, ids_with_tags
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +76,8 @@ _SOURCE_FIELDS = [
     "attachment_names",
     "body",
 ]
+#: What the cross-encoder reads (rerank.document_text).
+_RERANK_FIELDS = ["subject", "body"]
 _FALLBACK_SNIPPET_CHARS = 240
 
 
@@ -92,7 +103,7 @@ def _preference_for(raw_query: str) -> str:
     return "ledger-" + hashlib.sha1(raw_query.encode("utf-8")).hexdigest()[:16]
 
 
-def _understood(query: ParsedQuery) -> Understood:
+def _understood(query: ParsedQuery, corrections: list[Correction] | None = None) -> Understood:
     return Understood(
         terms=list(query.terms),
         phrases=list(query.phrases),
@@ -102,6 +113,7 @@ def _understood(query: ParsedQuery) -> Understood:
         subject=list(query.subject),
         after=query.after.isoformat() if query.after else None,
         before=query.before.isoformat() if query.before else None,
+        corrections=corrections or [],
     )
 
 
@@ -118,7 +130,7 @@ def _snippets(hit: FusedHit) -> list[str]:
     return []
 
 
-def _to_hit(hit: FusedHit) -> SearchHit:
+def _to_hit(hit: FusedHit, tags: list[str] | None = None) -> SearchHit:
     source = hit.source
     return SearchHit(
         id=hit.doc_id,
@@ -142,6 +154,331 @@ def _to_hit(hit: FusedHit) -> SearchHit:
         # than approximating from its position in the fused list.
         bm25_rank=hit.ranks.get("bm25"),
         vector_rank=hit.ranks.get("knn"),
+        tags=tags or [],
+    )
+
+
+async def resolve_filters(
+    es: AsyncElasticsearch,
+    settings: Settings,
+    parsed: ParsedQuery,
+    structured: StructuredFilters | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Every filter a search applies, and any warnings resolving them raised.
+
+    Shared with export, so an export holds exactly the emails the search did.
+    Review tags live in their own index (D37), so a tag filter becomes an ids
+    filter over the emails carrying the tag -- an empty one when none do.
+    """
+    filters = build_filters(parsed)
+    warnings: list[str] = []
+    if structured is not None:
+        # Facet clicks AND with whatever the query string already said.
+        filters = filters + build_structured_filters(structured)
+        if structured.tags:
+            ids, truncated = await ids_with_tags(es, settings.tags_index, structured.tags)
+            filters.append({"ids": {"values": ids}})
+            if truncated:
+                warnings.append(f"tag filter limited to the first {len(ids)} tagged emails")
+    return filters, warnings
+
+
+async def _hydrate(
+    es: AsyncElasticsearch,
+    settings: Settings,
+    hits: list[FusedHit],
+    *,
+    fields: list[str],
+    preference: str,
+    highlight_query: dict[str, Any] | None = None,
+) -> None:
+    """Load ``fields`` for ``hits``, in place, highlighting keyword matches.
+
+    With ``highlight_query``, documents the keyword leg matched are fetched by
+    an id-filtered search that also highlights them; highlighting costs per
+    document, so it is never spent on semantic-only hits, which keep their
+    chunk snippet. Everything else is a plain multi-get. The two run
+    concurrently, so hydration costs the slower of them, not the sum.
+    """
+    keyword = [h for h in hits if highlight_query is not None and "bm25" in h.ranks]
+    keyword_ids = {h.doc_id for h in keyword}
+    plain = [h for h in hits if h.doc_id not in keyword_ids]
+
+    async def highlighted() -> list[dict[str, Any]]:
+        if not keyword:
+            return []
+        response = await es.search(
+            index=settings.emails_alias,
+            query={
+                "bool": {
+                    "must": [highlight_query],
+                    "filter": [{"ids": {"values": [h.doc_id for h in keyword]}}],
+                }
+            },
+            size=len(keyword),
+            source={"includes": fields},
+            highlight=HIGHLIGHT,
+            preference=preference,
+        )
+        return list(response["hits"]["hits"])
+
+    async def fetched() -> list[dict[str, Any]]:
+        if not plain:
+            return []
+        response = await es.mget(
+            index=settings.emails_alias,
+            ids=[h.doc_id for h in plain],
+            source_includes=fields,
+            preference=preference,
+        )
+        return [d for d in response["docs"] if d.get("found")]
+
+    found = [doc for docs in await asyncio.gather(highlighted(), fetched()) for doc in docs]
+    loaded = {doc["_id"]: doc for doc in found}
+    for hit in hits:
+        doc = loaded.get(hit.doc_id)
+        if doc is None:
+            continue
+        hit.source = {**hit.source, **(doc.get("_source") or {})}
+        if doc.get("highlight"):
+            hit.highlight = doc["highlight"]
+
+
+@dataclass
+class _Candidates:
+    """Everything about a search except which page of it is shown.
+
+    Cached, so that later pages and exports reuse the fused list instead of
+    re-running both retrieval legs, the facets, the embedder and the reranker
+    to show twenty more rows.
+    """
+
+    parsed: ParsedQuery
+    fused: list[FusedHit]
+    bm25_query: dict[str, Any]
+    bm25_total: int
+    has_bm25_leg: bool
+    facets: dict[str, list[Facet]]
+    corrections: list[Correction]
+    warnings: list[str]
+    timings: Timings
+
+
+class _ResultCache:
+    """Bounded, time-limited cache of fused candidate lists. Event-loop only."""
+
+    def __init__(self, size: int, ttl_s: float) -> None:
+        self.size, self.ttl_s = size, ttl_s
+        self._data: OrderedDict[Hashable, tuple[float, _Candidates]] = OrderedDict()
+
+    def get(self, key: Hashable) -> _Candidates | None:
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        stored, value = entry
+        if monotonic() - stored > self.ttl_s:
+            del self._data[key]
+            return None
+        self._data.move_to_end(key)
+        return value
+
+    def put(self, key: Hashable, value: _Candidates) -> None:
+        if self.size <= 0:
+            return
+        self._data[key] = (monotonic(), value)
+        self._data.move_to_end(key)
+        while len(self._data) > self.size:
+            self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+_results = _ResultCache(256, 300.0)
+
+
+def configure_cache(size: int, ttl_s: float) -> None:
+    """Apply ``Settings.result_cache_*``."""
+    _results.size, _results.ttl_s = size, ttl_s
+
+
+def reset_cache() -> None:
+    """Test hook."""
+    _results.clear()
+
+
+def _timed_embed(text: str, settings: Settings) -> tuple[list[float], float]:
+    t0 = perf_counter()
+    vector = embed_query(text, settings.embed_model, settings.bge_query_prefix)
+    return vector, round((perf_counter() - t0) * 1000, 2)
+
+
+async def _retrieve(
+    es: AsyncElasticsearch,
+    settings: Settings,
+    *,
+    q: str,
+    method: Literal["hybrid", "bm25", "vector"],
+    use_rerank: bool,
+    structured: StructuredFilters | None,
+) -> _Candidates:
+    """Parse, run both legs, fuse and (optionally) rerank: the whole ranked list."""
+    timings = Timings()
+
+    t0 = perf_counter()
+    parsed = parse(q)
+    timings.parse_ms = round((perf_counter() - t0) * 1000, 2)
+
+    # The fusion window is a constant for a query, never a function of the page.
+    # RRF ranks a document against the other candidates it was fused with, so
+    # growing the window per page reshuffles the whole list: fused[20:40] taken
+    # from a 40-document window is not a continuation of fused[0:20] taken from
+    # a 20-document window, and page two repeats results page one already showed.
+    window = settings.fusion_window
+
+    filters, filter_warnings = await resolve_filters(es, settings, parsed, structured)
+    bm25_query = build_bm25_query(
+        parsed, filters, settings.bm25_fields, settings.bm25_minimum_should_match
+    )
+
+    # No highlighting and no documents on the retrieval legs. Fusion needs a
+    # wide candidate set, but only ids and ranks; the page is what gets shown.
+    # Highlighting is per document (measured at size 200: 8.6ms without, 158.8ms
+    # with), and so is _source: bodies made each leg's response ~380KB for the
+    # ~20 documents a page uses (D35). So the window is fetched bare and the page
+    # is hydrated and highlighted by a second, id-filtered query below.
+    request: dict[str, Any] = {
+        "query": bm25_query,
+        "size": window,
+        "_source": False,
+        "aggs": facets_mod.build_aggs(),
+        "track_total_hits": True,
+    }
+    suggest = build_suggest(parsed) if settings.spell_correct_embedding else None
+    if suggest:
+        request["suggest"] = suggest
+    tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
+    if parsed.has_text:
+        request["sort"] = [{"_score": {"order": "desc"}}, tiebreak]
+    else:
+        # A pure filter query has no relevance signal, so order by recency.
+        request["sort"] = [{"date": {"order": "desc", "missing": "_last"}}, tiebreak]
+
+    wants_vector = method in ("hybrid", "vector")
+    # Embed the query while the BM25 leg is in flight. Spelling correction
+    # needs the BM25 response, but it changes the text only for a misspelled
+    # query; the common case uses the vector computed here, so the model's time
+    # overlaps the network's instead of adding to it. Off the event loop:
+    # encoding is synchronous CPU work (measured, concurrency 1 -> 8: p50 wall
+    # 46.6ms -> 159.6ms with it inline), and torch releases the GIL.
+    speculative: asyncio.Task[tuple[list[float], float]] | None = None
+    if wants_vector and parsed.semantic_text:
+        speculative = asyncio.create_task(
+            asyncio.to_thread(_timed_embed, parsed.semantic_text, settings)
+        )
+
+    preference = _preference_for(q)
+    try:
+        t0 = perf_counter()
+        bm25_response = await es.search(
+            index=settings.emails_alias, preference=preference, **request
+        )
+        timings.bm25_ms = round((perf_counter() - t0) * 1000, 2)
+
+        legs: dict[str, list[dict[str, Any]]] = {}
+        if method in ("hybrid", "bm25"):
+            legs["bm25"] = bm25_response["hits"]["hits"]
+
+        fixes = find_corrections(
+            parsed,
+            bm25_response.body,
+            lambda word: is_known_word(word, settings.embed_model),
+        )
+        semantic_text = corrected_text(parsed, fixes) if fixes else parsed.semantic_text
+        corrections = [Correction(original=f.original, suggested=f.suggested) for f in fixes]
+
+        if semantic_text and wants_vector:
+            if speculative is not None and semantic_text == parsed.semantic_text:
+                vector, timings.embed_ms = await speculative
+            else:
+                if speculative is not None:
+                    speculative.cancel()  # the thread finishes; its result is dropped
+                vector, timings.embed_ms = await asyncio.to_thread(
+                    _timed_embed, semantic_text, settings
+                )
+            speculative = None
+
+            t0 = perf_counter()
+            knn_response = await es.search(
+                index=settings.emails_alias,
+                # A quoted phrase is a requirement on both legs (D35).
+                knn=build_knn(
+                    vector, filters + phrase_filters(parsed), window, settings.knn_num_candidates
+                ),
+                size=window,
+                source=False,
+                preference=preference,
+            )
+            timings.knn_ms = round((perf_counter() - t0) * 1000, 2)
+            legs["knn"] = knn_response["hits"]["hits"]
+    finally:
+        if speculative is not None:
+            speculative.cancel()
+
+    t0 = perf_counter()
+    fused = fuse(legs)
+    timings.fuse_ms = round((perf_counter() - t0) * 1000, 2)
+
+    warnings = [*parsed.warnings, *filter_warnings]
+    if use_rerank and settings.rerank_free_text_only and (parsed.phrases or parsed.has_filters):
+        # The user gave an explicit precision signal; do not let a semantic
+        # reranker talk us out of it (D23). Say so: a skipped rerank that
+        # returns the same results with no explanation looks like a broken one.
+        use_rerank = False
+        warnings.append(
+            "reranking skipped: the query has a quoted phrase or a field operator, "
+            "and the reranker never overrides an explicit precision signal"
+        )
+    if use_rerank and semantic_text and fused:
+        t0 = perf_counter()
+        # The cross-encoder reads subject and body, which retrieval no longer
+        # fetches; loading them is part of what reranking costs.
+        await _hydrate(
+            es,
+            settings,
+            fused[: settings.rerank_window],
+            fields=_RERANK_FIELDS,
+            preference=preference,
+        )
+        # Same reasoning as the embedder: the cross-encoder is heavier still.
+        fused = await asyncio.to_thread(
+            rerank_hits,
+            semantic_text,
+            fused,
+            settings.rerank_model,
+            settings.rerank_window,
+        )
+        timings.rerank_ms = round((perf_counter() - t0) * 1000, 2)
+        # The bodies were only for the cross-encoder; do not keep them cached.
+        for hit in fused:
+            hit.source = {}
+
+    if len(fused) >= settings.fusion_window:
+        warnings.append(f"pagination is limited to the top {settings.fusion_window} fused results")
+
+    return _Candidates(
+        parsed=parsed,
+        fused=fused,
+        bm25_query=bm25_query,
+        bm25_total=int(bm25_response["hits"]["total"]["value"]),
+        has_bm25_leg="bm25" in legs,
+        facets={
+            name: [Facet(**bucket) for bucket in buckets]
+            for name, buckets in facets_mod.parse_aggs(bm25_response.body).items()
+        },
+        corrections=corrections,
+        warnings=warnings,
+        timings=timings,
     )
 
 
@@ -156,137 +493,57 @@ async def run_search(
     rerank: bool | None = None,
     structured: StructuredFilters | None = None,
 ) -> SearchResponse:
-    """Run the search pipeline.
+    """Run the search pipeline and return one page of it.
 
     ``method`` exists so the evaluation harness can measure each retrieval leg in
     isolation against exactly the query construction production uses, rather
     than re-implementing it. The HTTP API always uses the default, "hybrid".
+
+    A first page always runs the full pipeline, so its timings (and every
+    benchmark and evaluation) measure real work. A later page reuses the fused
+    list its first page cached, when it is still there.
     """
     started = perf_counter()
-    timings = Timings()
-
-    t0 = perf_counter()
-    parsed = parse(q)
-    timings.parse_ms = round((perf_counter() - t0) * 1000, 2)
-
-    page_size = min(size or settings.default_page_size, settings.max_page_size)
-    page_size = max(1, page_size)
+    requested = size or settings.default_page_size
+    page_size = max(1, min(requested, settings.max_page_size))
     offset = decode_page_token(page_token)
-    # The fusion window is a constant for a query, never a function of the page.
-    # RRF ranks a document against the other candidates it was fused with, so
-    # growing the window per page reshuffles the whole list: fused[20:40] taken
-    # from a 40-document window is not a continuation of fused[0:20] taken from
-    # a 20-document window, and page two repeats results page one already showed.
-    window = settings.fusion_window
+    use_rerank = settings.rerank_enabled if rerank is None else rerank
 
-    filters = build_filters(parsed)
-    if structured is not None:
-        # Facet clicks AND with whatever the query string already said.
-        filters = filters + build_structured_filters(structured)
-    bm25_query = build_bm25_query(parsed, filters, settings.bm25_fields)
+    key = (q, structured, method, use_rerank, tag_generation())
+    candidates = _results.get(key) if page_token else None
+    cached = candidates is not None
+    if candidates is None:
+        candidates = await _retrieve(
+            es, settings, q=q, method=method, use_rerank=use_rerank, structured=structured
+        )
+        _results.put(key, candidates)
+    parsed, fused = candidates.parsed, candidates.fused
+    timings = Timings() if cached else candidates.timings.model_copy()
 
-    # No highlighting on the retrieval leg. Fusion needs a wide candidate set,
-    # highlighting needs only the page that is actually returned, and the cost
-    # of highlighting is per document: measured on this corpus at size 200 it is
-    # 8.6ms without and 158.8ms with. So the window is fetched bare and the page
-    # is highlighted by a second, id-filtered query below.
-    request: dict[str, Any] = {
-        "query": bm25_query,
-        "size": window,
-        "_source": {"includes": _SOURCE_FIELDS},
-        "aggs": facets_mod.build_aggs(),
-        "track_total_hits": True,
-    }
-    tiebreak = {"message_id": {"order": "asc", "missing": "_last"}}
-    if parsed.has_text:
-        request["sort"] = [{"_score": {"order": "desc"}}, tiebreak]
-    else:
-        # A pure filter query has no relevance signal, so order by recency.
-        request["sort"] = [{"date": {"order": "desc", "missing": "_last"}}, tiebreak]
+    # Copies: hydration writes documents into the hits, and the cached list
+    # should hold ranks, not bodies.
+    page = [
+        replace(hit, source=dict(hit.source), highlight=dict(hit.highlight), ranks=dict(hit.ranks))
+        for hit in fused[offset : offset + page_size]
+    ]
 
     preference = _preference_for(q)
-    t0 = perf_counter()
-    bm25_response = await es.search(index=settings.emails_alias, preference=preference, **request)
-    timings.bm25_ms = round((perf_counter() - t0) * 1000, 2)
-
-    legs: dict[str, list[dict[str, Any]]] = {}
-    if method in ("hybrid", "bm25"):
-        legs["bm25"] = bm25_response["hits"]["hits"]
-
-    if parsed.semantic_text and method in ("hybrid", "vector"):
+    if page:
         t0 = perf_counter()
-        # Off the event loop: encoding is synchronous CPU work, and running it
-        # inline stalls every other in-flight request for its whole duration.
-        # Measured on the dev subset, concurrency 1 -> 8: p50 wall 46.6ms ->
-        # 159.6ms with the call inline, while embed_ms itself stayed flat --
-        # the cost was other requests queueing behind it, not the model.
-        # torch releases the GIL inside the forward pass, so a worker thread
-        # genuinely overlaps with the event loop's I/O.
-        vector = await asyncio.to_thread(
-            embed_query, parsed.semantic_text, settings.embed_model, settings.bge_query_prefix
-        )
-        timings.embed_ms = round((perf_counter() - t0) * 1000, 2)
-
-        t0 = perf_counter()
-        knn_response = await es.search(
-            index=settings.emails_alias,
-            knn=build_knn(vector, filters, window, settings.knn_num_candidates),
-            size=window,
-            source={"includes": _SOURCE_FIELDS},
+        hydration = _hydrate(
+            es,
+            settings,
+            page,
+            fields=_SOURCE_FIELDS,
             preference=preference,
+            highlight_query=candidates.bm25_query if parsed.has_text else None,
         )
-        timings.knn_ms = round((perf_counter() - t0) * 1000, 2)
-        legs["knn"] = knn_response["hits"]["hits"]
-
-    t0 = perf_counter()
-    fused = fuse(legs)
-    timings.fuse_ms = round((perf_counter() - t0) * 1000, 2)
-
-    # Reranking is a request flag over a config default, and its cost is reported
-    # separately so it can never hide inside total_ms (docs/SPEC.md section 5).
-    use_rerank = settings.rerank_enabled if rerank is None else rerank
-    rerank_note: str | None = None
-    if use_rerank and settings.rerank_free_text_only and (parsed.phrases or parsed.has_filters):
-        # The user gave an explicit precision signal; do not let a semantic
-        # reranker talk us out of it (D23). Say so: a skipped rerank that
-        # returns the same results with no explanation looks like a broken one.
-        use_rerank = False
-        rerank_note = (
-            "reranking skipped: the query has a quoted phrase or a field operator, "
-            "and the reranker never overrides an explicit precision signal"
+        _, page_tags = await asyncio.gather(
+            hydration, get_tags(es, settings.tags_index, [hit.doc_id for hit in page])
         )
-    if use_rerank and parsed.semantic_text and fused:
-        t0 = perf_counter()
-        # Same reasoning as the embedder: the cross-encoder is heavier still.
-        fused = await asyncio.to_thread(
-            rerank_hits,
-            parsed.semantic_text,
-            fused,
-            settings.rerank_model,
-            settings.rerank_window,
-        )
-        timings.rerank_ms = round((perf_counter() - t0) * 1000, 2)
-
-    page = fused[offset : offset + page_size]
-
-    # Highlight exactly the page. Only documents the keyword leg matched can
-    # carry keyword highlights; a semantic-only hit keeps its chunk snippet.
-    highlight_ids = [hit.doc_id for hit in page if "bm25" in hit.ranks]
-    if highlight_ids:
-        t0 = perf_counter()
-        highlight_response = await es.search(
-            index=settings.emails_alias,
-            query={"bool": {"must": [bm25_query], "filter": [{"ids": {"values": highlight_ids}}]}},
-            size=len(highlight_ids),
-            source=False,
-            highlight=HIGHLIGHT,
-            preference=preference,
-        )
-        fragments = {h["_id"]: h.get("highlight") or {} for h in highlight_response["hits"]["hits"]}
-        for hit in page:
-            if hit.doc_id in fragments:
-                hit.highlight = fragments[hit.doc_id]
         timings.highlight_ms = round((perf_counter() - t0) * 1000, 2)
+    else:
+        page_tags = {}
 
     next_token = (
         encode_page_token(offset + page_size)
@@ -294,36 +551,28 @@ async def run_search(
         else None
     )
 
-    warnings = list(parsed.warnings)
-    if rerank_note:
-        warnings.append(rerank_note)
-    if len(fused) >= settings.fusion_window and next_token is None:
-        warnings.append(f"pagination is limited to the top {settings.fusion_window} fused results")
-
-    facet_payload = {
-        name: [Facet(**bucket) for bucket in buckets]
-        for name, buckets in facets_mod.parse_aggs(bm25_response.body).items()
-    }
+    warnings = list(candidates.warnings)
+    if requested > settings.max_page_size:
+        warnings.append(f"page size capped at {settings.max_page_size}")
 
     # The BM25 leg's exact count is the meaningful "how many emails match"
     # (DECISIONS D16), but it describes only that leg. A semantic-only query --
     # keywords that match nothing while the vector leg finds plenty -- would
     # otherwise report 0 above a page of results. Never under-report what was
     # actually returned.
-    bm25_total = int(bm25_response["hits"]["total"]["value"])
-    total = bm25_total if "bm25" in legs else 0
+    total = candidates.bm25_total if candidates.has_bm25_leg else 0
     total = max(total, len(fused))
 
     timings.total_ms = round((perf_counter() - started) * 1000, 2)
     return SearchResponse(
         query=q,
-        understood=_understood(parsed),
+        understood=_understood(parsed, candidates.corrections),
         total=total,
         size=page_size,
-        hits=[_to_hit(hit) for hit in page],
-        facets=facet_payload,
+        hits=[_to_hit(hit, page_tags.get(hit.doc_id)) for hit in page],
+        facets=candidates.facets,
         timings=timings,
         warnings=warnings,
         next_page_token=next_token,
-        reranked=bool(timings.rerank_ms),
+        reranked=bool(candidates.timings.rerank_ms),
     )

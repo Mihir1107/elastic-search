@@ -8,12 +8,13 @@
  * switching never costs you your place in the results.
  */
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { getEmail, getThread } from "@/lib/api";
 import type { EmailDoc, EmailHit, ThreadResponse } from "@/lib/types";
-import { cleanText, longDate, personName, plural, shortDate } from "@/lib/format";
+import { longDate, personName, plural, reflow, shortDate } from "@/lib/format";
+import { PRESET_TAGS } from "@/lib/useTags";
 import { Avatar } from "./Avatar";
 
 /** One spring for the card and everything riding inside it, so they move as one. */
@@ -24,11 +25,16 @@ export function ReadingPane({
   onClose,
   saved,
   onToggleSave,
+  tags,
+  onSetTags,
 }: {
   hit: EmailHit | null;
   onClose: () => void;
   saved: boolean;
   onToggleSave: () => void;
+  /** The open email's review tags, including changes made since it was fetched. */
+  tags: string[];
+  onSetTags: (next: string[]) => void;
 }) {
   const [tab, setTab] = useState<"message" | "thread">("message");
   const [doc, setDoc] = useState<EmailDoc | null>(null);
@@ -78,9 +84,11 @@ export function ReadingPane({
 
   useEffect(() => setPortalReady(true), []);
 
-  // A different email, or none, starts collapsed.
+  // A different email, or none, starts collapsed and at its first line.
   useEffect(() => {
     setExpanded(false);
+    scrollFraction.current = 0;
+    bodyRef.current?.scrollTo({ top: 0 });
   }, [hit?.id]);
 
   const toggle = useCallback((next: boolean) => {
@@ -222,11 +230,19 @@ export function ReadingPane({
         className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
         {/* A measure, not the full overlay width: long lines are hard to read. */}
-        <div className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}>
+        {/* Keyed by email and tab: switching settles the new text in rather
+            than swapping it under the reader's eye. */}
+        <motion.div
+          key={`${hit.id}-${tab}`}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className={expanded ? "mx-auto max-w-[760px] px-4 py-4" : undefined}
+        >
           {error && <p className="px-5 py-8 text-[var(--color-muted)]">{error}</p>}
-          {!error && tab === "message" && <Message doc={doc} />}
+          {!error && tab === "message" && <Message doc={doc} tags={tags} onSetTags={onSetTags} />}
           {!error && tab === "thread" && <Thread thread={thread} currentId={hit.id} />}
-        </div>
+        </motion.div>
       </motion.div>
     </motion.div>
   );
@@ -276,6 +292,83 @@ export function ReadingPane({
   );
 }
 
+const TAG_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The reviewer's marks on this email: the presets as toggles, plus any custom tag. */
+function TagBar({ tags, onChange }: { tags: string[]; onChange: (next: string[]) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const presets: readonly string[] = PRESET_TAGS;
+  const custom = tags.filter((t) => !presets.includes(t));
+  const name = draft.trim().toLowerCase();
+  const valid = TAG_NAME.test(name);
+
+  const toggle = (t: string) =>
+    onChange(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t].sort());
+
+  const chip = (on: boolean) =>
+    [
+      "rounded-full border px-2.5 py-0.5 text-[0.75rem] capitalize transition-colors",
+      on
+        ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
+        : "border-[var(--color-rule)] text-[var(--color-muted)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
+    ].join(" ");
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Review tags">
+      {[...presets, ...custom].map((t) => {
+        const on = tags.includes(t);
+        return (
+          <button
+            key={t}
+            onClick={() => toggle(t)}
+            aria-pressed={on}
+            title={on ? `Remove the ${t} tag` : `Tag as ${t}`}
+            // Inline, as in Insights: a second text-* utility would lose to the size one.
+            style={on ? { color: "var(--color-surface)" } : undefined}
+            className={chip(on)}
+          >
+            {t}
+          </button>
+        );
+      })}
+      {adding ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!valid) return;
+            if (!tags.includes(name)) onChange([...tags, name].sort());
+            setDraft("");
+            setAdding(false);
+          }}
+        >
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              setDraft("");
+              setAdding(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") e.currentTarget.blur();
+            }}
+            aria-label="New tag name"
+            aria-invalid={draft !== "" && !valid}
+            placeholder="new tag"
+            maxLength={32}
+            className="w-28 rounded-full border border-[var(--color-rule-strong)] bg-transparent px-2.5 py-0.5 text-[0.75rem] outline-none aria-[invalid=true]:border-[var(--color-marker-key-solid)]"
+          />
+        </form>
+      ) : (
+        <button onClick={() => setAdding(true)} className={chip(false)} title="Add another tag">
+          + Tag
+        </button>
+      )}
+    </div>
+  );
+}
+
 function IconButton({
   onClick,
   label,
@@ -299,7 +392,44 @@ function IconButton({
   );
 }
 
-function Message({ doc }: { doc: EmailDoc | null }) {
+/**
+ * The message text, reflowed for reading by default. The original wrapping can
+ * matter to a reviewer (a table, an address block), so it is one click away.
+ */
+function Body({ text }: { text: string }) {
+  const [original, setOriginal] = useState(false);
+  const flowed = useMemo(() => reflow(text), [text]);
+  const changed = flowed !== text;
+
+  return (
+    <div className="mt-5">
+      {changed && (
+        <div className="mb-2 flex justify-end">
+          <button
+            onClick={() => setOriginal((o) => !o)}
+            aria-pressed={original}
+            className="meta rounded-full px-2 py-0.5 text-[0.75rem] transition-colors hover:bg-[var(--color-sunk)] hover:text-[var(--color-ink)]"
+          >
+            {original ? "Reflow for reading" : "Show original line breaks"}
+          </button>
+        </div>
+      )}
+      <div className={original ? "prose-mail prose-mail-raw" : "prose-mail prose-letter"}>
+        {original ? text : flowed}
+      </div>
+    </div>
+  );
+}
+
+function Message({
+  doc,
+  tags,
+  onSetTags,
+}: {
+  doc: EmailDoc | null;
+  tags: string[];
+  onSetTags: (next: string[]) => void;
+}) {
   if (!doc) return <Loading />;
 
   return (
@@ -325,7 +455,9 @@ function Message({ doc }: { doc: EmailDoc | null }) {
         </time>
       </div>
 
-      <div className="prose-mail mt-5">{cleanText(doc.body)}</div>
+      <TagBar tags={tags} onChange={onSetTags} />
+
+      <Body text={doc.body} />
 
       {doc.quoted_text && (
         <details className="mt-5 border-t border-[var(--color-rule)] pt-4">
@@ -429,7 +561,7 @@ function Thread({ thread, currentId }: { thread: ThreadResponse | null; currentI
                   current ? "" : "line-clamp-2 text-[var(--color-muted)]",
                 ].join(" ")}
               >
-                {cleanText(m.body)}
+                {m.body}
               </p>
             </li>
           );

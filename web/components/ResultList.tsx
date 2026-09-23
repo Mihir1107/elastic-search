@@ -8,6 +8,7 @@
  * two-bar signal answer the second.
  */
 
+import type React from "react";
 import { motion } from "motion/react";
 import type { EmailHit } from "@/lib/types";
 import { personName, shortDate } from "@/lib/format";
@@ -21,11 +22,14 @@ interface Props {
   onOpen: (hit: EmailHit) => void;
   isSaved: (id: string) => boolean;
   onToggleSave: (hit: EmailHit) => void;
+  /** Review tags for a hit, including changes made since it was fetched. */
+  tagsFor: (hit: EmailHit) => string[];
 }
 
-export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave }: Props) {
+export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave, tagsFor }: Props) {
   return (
-    <div className="card overflow-hidden">
+    // ink-sweep: each match's marker stroke is drawn in as its row arrives.
+    <div className="card ink-sweep overflow-hidden">
       {hits.map((hit, i) => (
         <Row
           key={hit.id}
@@ -35,6 +39,7 @@ export function ResultList({ hits, activeId, onOpen, isSaved, onToggleSave }: Pr
           onOpen={onOpen}
           saved={isSaved(hit.id)}
           onToggleSave={onToggleSave}
+          reviewTags={tagsFor(hit)}
         />
       ))}
     </div>
@@ -48,6 +53,7 @@ function Row({
   onOpen,
   saved,
   onToggleSave,
+  reviewTags,
 }: {
   hit: EmailHit;
   index: number;
@@ -55,11 +61,13 @@ function Row({
   onOpen: (h: EmailHit) => void;
   saved: boolean;
   onToggleSave: (h: EmailHit) => void;
+  reviewTags: string[];
 }) {
   const bodyFragment = hit.highlight.body?.[0];
   const semanticOnly = hit.signals.bm25_rank === null && hit.signals.vector_rank !== null;
   const snippet = bodyFragment ?? hit.semantic_snippet;
   const tags = hit.topics.length ? hit.topics : hit.folder ? [hit.folder] : [];
+  const stagger = Math.min(index, 8) * 22;
 
   return (
     <motion.article
@@ -70,8 +78,10 @@ function Row({
         duration: 0.26,
         ease: [0.22, 1, 0.36, 1],
         // Stagger only the first screenful; later rows would feel sluggish.
-        delay: Math.min(index, 8) * 0.022,
+        delay: stagger / 1000,
       }}
+      // The row settles first, then its ink is drawn.
+      style={{ "--mk-delay": `${stagger + 140}ms` } as React.CSSProperties}
       className="result cursor-pointer px-4 py-3.5"
       data-active={active}
       // A clickable row needs to be reachable and operable without a mouse.
@@ -87,6 +97,14 @@ function Row({
         }
       }}
     >
+      {active && (
+        <motion.span
+          layoutId="result-rail"
+          className="result-rail"
+          transition={{ type: "spring", stiffness: 520, damping: 42 }}
+          aria-hidden
+        />
+      )}
       <div className="flex gap-3">
         <Avatar address={hit.from} name={hit.from_name} />
 
@@ -122,6 +140,12 @@ function Row({
             {/* Tags give up room before the controls do, so the star is never
                 pushed off the edge on a densely tagged result. */}
             <span className="flex min-w-0 flex-1 gap-1.5 overflow-hidden">
+              {/* The reviewer's marks come first: they are the point of a review. */}
+              {reviewTags.map((t) => (
+                <span key={`review-${t}`} className="tag tag-review">
+                  {t}
+                </span>
+              ))}
               {tags.slice(0, 3).map((t) => (
                 <span key={t} className="tag">
                   {t}
@@ -138,7 +162,7 @@ function Row({
                 />
               )}
               {hit.has_attachment && <Clip />}
-              <SignalBar signals={hit.signals} delay={Math.min(index, 8) * 22} />
+              <SignalBar signals={hit.signals} delay={stagger} />
               <button
                 onClick={(e) => {
                   e.stopPropagation();

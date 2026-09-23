@@ -14,13 +14,16 @@ import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from app.search.embedder import gated
 from app.search.fusion import FusedHit
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
 _lock = threading.Lock()
-_model: CrossEncoder | None = None
+#: Keyed by model name: a single slot would keep serving the first model loaded
+#: after the configured name changed.
+_models: dict[str, CrossEncoder] = {}
 
 #: Cross-encoders truncate; keep the pair well inside the model's window.
 MAX_DOC_CHARS = 1200
@@ -28,20 +31,19 @@ MAX_LENGTH = 512
 
 
 def get_reranker(name: str) -> CrossEncoder:
-    global _model
     with _lock:
-        if _model is None:
+        model = _models.get(name)
+        if model is None:
             from sentence_transformers import CrossEncoder
 
-            _model = CrossEncoder(name, max_length=MAX_LENGTH)
-        return _model
+            model = _models[name] = CrossEncoder(name, max_length=MAX_LENGTH)
+        return model
 
 
 def reset_cache() -> None:
     """Test hook."""
-    global _model
     with _lock:
-        _model = None
+        _models.clear()
 
 
 def document_text(hit: FusedHit) -> str:
@@ -71,7 +73,7 @@ def rerank(
 
     model = get_reranker(model_name)
     pairs = [(query_text, document_text(hit)) for hit in head]
-    scores: Any = model.predict(pairs, show_progress_bar=False)
+    scores: Any = gated(lambda: model.predict(pairs, show_progress_bar=False))
 
     for hit, score in zip(head, scores, strict=True):
         hit.score = float(score)

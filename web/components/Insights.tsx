@@ -10,7 +10,7 @@
  */
 
 import { AnimatePresence, motion } from "motion/react";
-import type { Facets, SearchFilters } from "@/lib/types";
+import type { Facets, SearchFilters, TagCount } from "@/lib/types";
 import { count, monthLabel, personName, plural } from "@/lib/format";
 import { Avatar } from "./Avatar";
 import { Timeline } from "./Timeline";
@@ -22,6 +22,8 @@ interface Props {
   onToggle: (key: keyof SearchFilters, value: string) => void;
   onRange: (after: string | undefined, before: string | undefined) => void;
   onAttachments: (value: boolean | undefined) => void;
+  /** Review tags in use, counted across the whole corpus (not this result set). */
+  tagCounts: TagCount[];
 }
 
 export function Insights({
@@ -31,6 +33,7 @@ export function Insights({
   onToggle,
   onRange,
   onAttachments,
+  tagCounts,
 }: Props) {
   const months = facets.date_histogram.filter((b) => b.doc_count > 0);
   const span =
@@ -140,24 +143,56 @@ export function Insights({
           </Section>
         )}
 
-        <Section title="Attachments">
-          <button
-            onClick={() =>
-              onAttachments(filters.has_attachment === true ? undefined : true)
-            }
-            aria-pressed={filters.has_attachment === true}
-            className={[
-              "w-full rounded-lg px-1.5 py-1.5 text-left text-[0.875rem] transition-colors",
-              filters.has_attachment === true
-                ? "bg-[var(--color-sunk)] font-semibold"
-                : "hover:bg-[var(--color-sunk)]",
-            ].join(" ")}
-          >
-            {facets.attachments.with > 0
-              ? `${plural(facets.attachments.with, "email")} with files`
-              : "No attachments in these results"}
-          </button>
-        </Section>
+        {(tagCounts.length > 0 || (filters.tag?.length ?? 0) > 0) && (
+          <Section title="Review tags">
+            <div className="flex flex-wrap gap-1.5">
+              {tagCounts.map((t) => {
+                const on = filters.tag?.includes(t.tag) ?? false;
+                return (
+                  <button
+                    key={t.tag}
+                    onClick={() => onToggle("tag", t.tag)}
+                    aria-pressed={on}
+                    style={on ? { color: "var(--color-surface)" } : undefined}
+                    className={[
+                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[0.75rem] capitalize transition-colors",
+                      on
+                        ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
+                        : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)]",
+                    ].join(" ")}
+                  >
+                    {t.tag}
+                    <span className="num opacity-60">{t.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Unlike every other count here, these are not scoped to the search. */}
+            <p className="meta mt-2 text-[0.75rem]">Counts cover all tagged mail.</p>
+          </Section>
+        )}
+
+        {/* Hidden while there is nothing to filter to, unless the filter is on. */}
+        {(facets.attachments.with > 0 || filters.has_attachment !== undefined) && (
+          <Section title="Attachments">
+            <button
+              onClick={() =>
+                onAttachments(filters.has_attachment === true ? undefined : true)
+              }
+              aria-pressed={filters.has_attachment === true}
+              className={[
+                "w-full rounded-lg px-1.5 py-1.5 text-left text-[0.875rem] transition-colors",
+                filters.has_attachment === true
+                  ? "bg-[var(--color-sunk)] font-semibold"
+                  : "hover:bg-[var(--color-sunk)]",
+              ].join(" ")}
+            >
+              {facets.attachments.with > 0
+                ? `${plural(facets.attachments.with, "email")} with files`
+                : "No attachments in these results"}
+            </button>
+          </Section>
+        )}
       </div>
 
       {/* One quiet editorial note, the only decoration on the page. */}

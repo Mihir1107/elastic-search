@@ -25,6 +25,11 @@ class Timings(BaseModel):
     total_ms: float = 0.0
 
 
+class Correction(BaseModel):
+    original: str
+    suggested: str
+
+
 class Understood(BaseModel):
     """How the query was interpreted -- shown so the behaviour is explainable."""
 
@@ -36,6 +41,8 @@ class Understood(BaseModel):
     subject: list[str] = []
     after: str | None = None
     before: str | None = None
+    #: Misspellings corrected before the query text was embedded.
+    corrections: list[Correction] = []
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -60,6 +67,8 @@ class SearchHit(BaseModel):
     #: 1-based position within each retrieval leg, or None if that leg missed it.
     bm25_rank: int | None = None
     vector_rank: int | None = None
+    #: Review tags on this email (DECISIONS D37).
+    tags: list[str] = []
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -94,6 +103,7 @@ class EmailDetail(BaseModel):
     has_attachment: bool = False
     attachment_names: list[str] = []
     duplicate_count: int = 1
+    tags: list[str] = []
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -102,6 +112,46 @@ class ThreadResponse(BaseModel):
     total: int
     messages: list[EmailDetail]
     timings: Timings
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+class TagsResponse(BaseModel):
+    tags: list[TagCount]
+
+
+class EmailTags(BaseModel):
+    id: str
+    tags: list[str]
+
+
+#: Bounds on request bodies, checked before any of it reaches Elasticsearch.
+_MAX_TAG_ITEMS = 64
+_MAX_BATCH_IDS = 500
+
+
+class SetTagsRequest(BaseModel):
+    tags: list[str] = Field(max_length=_MAX_TAG_ITEMS)
+
+
+class ChangeTagsRequest(BaseModel):
+    """Tags to add to and remove from one email, applied atomically."""
+
+    add: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+    remove: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+
+
+class BatchTagsRequest(BaseModel):
+    ids: list[str] = Field(max_length=_MAX_BATCH_IDS)
+    add: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+    remove: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+
+
+class BatchTagsResponse(BaseModel):
+    updated: int
 
 
 class Suggestion(BaseModel):

@@ -1,8 +1,12 @@
 """Stage 6: chunk bodies and compute chunk vectors.
 
-Resumable by design (docs/SPEC.md section 4): vectors are appended to the output as
-they are produced and a resumed run skips ids already present, so a long
-full-corpus run can be interrupted and continued.
+Resumable by design (docs/SPEC.md section 4), without letting a re-run serve stale
+data. Vectors are the expensive part, so they are reused -- but only for a document
+whose embeddable text is unchanged, and every output row is rebuilt from the fresh
+input, so a changed ``thread_id`` or a repaired body always flows through. The run
+writes to ``<out>.partial``, which replaces the output only on completion; an
+interrupted run resumes from it. (Earlier the stage skipped any id already in the
+output, so re-running the pipeline silently kept old threads and old text: D33, D36.)
 
 Chunking uses the embedding model's own tokenizer (~200 tokens with overlap)
 because BAAI/bge-small-en-v1.5 truncates around 512 tokens -- embedding a whole
@@ -15,6 +19,7 @@ applied to the QUERY side only at search time (DECISIONS D3).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -71,6 +76,43 @@ def embeddable_text(doc: dict[str, Any]) -> str:
     return body or subject
 
 
+def _text_fingerprint(doc: dict[str, Any], settings: IngestSettings) -> str:
+    """What the vectors depend on: the text and every setting that shapes the chunks."""
+    key = [
+        embeddable_text(doc),
+        settings.embed_model,
+        settings.chunk_tokens,
+        settings.chunk_overlap,
+        settings.max_chunks,
+    ]
+    return hashlib.sha1(json.dumps(key).encode("utf-8")).hexdigest()
+
+
+def _row_fingerprint(doc: dict[str, Any]) -> str:
+    """The whole input document, so a resumed run redoes rows whose input changed."""
+    fields = {k: v for k, v in doc.items() if k != "chunks"}
+    return hashlib.sha1(json.dumps(fields, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _index_previous(path: Path, settings: IngestSettings) -> dict[str, tuple[int, str]]:
+    """id -> (byte offset, text fingerprint) for each row of a previous output.
+
+    Offsets rather than rows: the full vector file does not fit comfortably in
+    memory, and only the rows being reused are ever read back.
+    """
+    found: dict[str, tuple[int, str]] = {}
+    if not path.exists():
+        return found
+    with path.open("rb") as handle:
+        offset = handle.tell()
+        for line in iter(handle.readline, b""):
+            if line.strip():
+                row = json.loads(line)
+                found[str(row.get("id"))] = (offset, _text_fingerprint(row, settings))
+            offset = handle.tell()
+    return found
+
+
 def run(
     in_path: Path,
     out_path: Path,
@@ -82,15 +124,18 @@ def run(
     stats = StageStats("embed")
     source = docs if docs is not None else read_jsonl(in_path)
 
-    done: set[str] = set()
-    if out_path.exists():
-        for row in read_jsonl(out_path):
-            done.add(str(row.get("id")))
-        if done:
-            stats.skip("already-embedded", len(done))
+    partial = out_path.with_name(out_path.name + ".partial")
+    # Rows already written by an interrupted run of this same input.
+    done: dict[str, str] = {}
+    if partial.exists():
+        for row in read_jsonl(partial):
+            done[str(row.get("id"))] = _row_fingerprint(row)
+    previous = _index_previous(out_path, settings)
+    reused = 0
 
     model = load_model(settings.embed_model)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_handle = out_path.open("rb") if previous else None
 
     pending: list[dict[str, Any]] = []
     chunk_counts: list[int] = []
@@ -126,10 +171,25 @@ def run(
         chunk_counts.clear()
         texts.clear()
 
-    with out_path.open("a", encoding="utf-8") as handle:
+    with partial.open("a", encoding="utf-8") as handle:
         for doc in source:
             doc_id = str(doc.get("id"))
-            if doc_id in done:
+            if done.get(doc_id) == _row_fingerprint(doc):
+                stats.skip("already-written")
+                continue
+            hit = previous.get(doc_id)
+            if hit and previous_handle and hit[1] == _text_fingerprint(doc, settings):
+                previous_handle.seek(hit[0])
+                old = json.loads(previous_handle.readline())
+                # Fresh metadata, reused vectors: only the text decides the vectors.
+                handle.write(
+                    json.dumps(
+                        {**doc, "chunks": old.get("chunks") or []}, ensure_ascii=False, default=str
+                    )
+                    + "\n"
+                )
+                reused += 1
+                stats.ok()
                 continue
             pieces = chunk_text(
                 model,
@@ -152,6 +212,10 @@ def run(
                 flush(handle)
         flush(handle)
 
+    if previous_handle:
+        previous_handle.close()
+    partial.replace(out_path)
+    stats.extra["vectors_reused"] = reused
     stats.extra["model"] = settings.embed_model
     stats.extra["dims"] = settings.embed_dims
     stats.extra["chunks_written"] = total_chunks

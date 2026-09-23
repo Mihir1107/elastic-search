@@ -17,8 +17,11 @@ import { Insights } from "./Insights";
 import { AttachmentsLens, DatesLens, PeopleLens, TopicsLens } from "./LensPanels";
 import { ThemeToggle } from "./ThemeToggle";
 import { TimingNote } from "./TimingNote";
+import { ReviewActions } from "./ReviewActions";
 import type { EmailHit, SearchFilters, SearchResponse } from "@/lib/types";
 import { useInsightsOpen, type View } from "@/lib/useLocal";
+import type { Tags } from "@/lib/useTags";
+import { exportUrl, isMock } from "@/lib/api";
 import { count, plural } from "@/lib/format";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -52,14 +55,21 @@ interface Props {
   view: View;
   onView: (v: View) => void;
   savedCount: number;
+  /** Review tags (D37): what is marked, and how to change it. */
+  tags: Tags;
 }
 
 export function Workspace(p: Props) {
   const { data } = p;
   const insights = useInsightsOpen();
+  const tagsOf = (h: EmailHit) => p.tags.tagsFor(h.id, h.tags);
+  const openTags = p.open ? tagsOf(p.open) : [];
+  const setOpenTags = (next: string[]) => {
+    if (p.open) void p.tags.set(p.open.id, next, openTags);
+  };
 
   const lenses: LensCount[] = data
-    ? [
+    ? ([
         { id: "emails", label: "Emails", n: data.total },
         { id: "people", label: "People", n: data.facets.senders.length },
         { id: "dates", label: "Dates", n: data.facets.date_histogram.filter((b) => b.doc_count > 0).length },
@@ -69,7 +79,11 @@ export function Workspace(p: Props) {
           n: (data.facets.topics.length ? data.facets.topics : data.facets.folders).length,
         },
         { id: "attachments", label: "Attachments", n: data.facets.attachments.with },
-      ]
+      ] satisfies LensCount[]).filter(
+        // This corpus records no attachments at all; an always-empty tab is noise.
+        // It still shows while selected, so switching away is never stranded.
+        (l) => l.id !== "attachments" || l.n > 0 || p.lens === "attachments",
+      )
     : [];
 
   return (
@@ -98,6 +112,19 @@ export function Workspace(p: Props) {
             M
           </span>
         </div>
+        <AnimatePresence>
+          {(p.loading || p.loadingMore) && (
+            <motion.span
+              key="progress"
+              className="progress-line"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              aria-hidden
+            />
+          )}
+        </AnimatePresence>
       </header>
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-5 py-6 sm:px-7 lg:flex lg:min-h-0 lg:flex-col lg:pt-4 lg:pb-5">
@@ -134,7 +161,7 @@ export function Workspace(p: Props) {
             every pixel here comes out of the reading pane's height. */}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           {data && <Tabs lenses={lenses} active={p.lens} onChange={p.onLens} />}
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
             <h1 className="meta min-w-0 truncate font-normal" title={p.committed || p.draft}>
               {/* The count crossfades instead of snapping, so a facet click
                   reads as the same number changing rather than a new page. */}
@@ -154,6 +181,20 @@ export function Workspace(p: Props) {
                 &ldquo;{p.committed || p.draft}&rdquo;
               </span>
             </h1>
+            {data && data.parsed.corrections.length > 0 && (
+              <span
+                className="meta shrink-0"
+                title="Keyword matching already tolerates typos; the corrected spelling is what semantic search looked for."
+              >
+                Meaning searched as{" "}
+                {data.parsed.corrections.map((c, i) => (
+                  <span key={c.original}>
+                    {i > 0 && ", "}
+                    <span className="font-serif text-[var(--color-ink)]">&ldquo;{c.suggested}&rdquo;</span>
+                  </span>
+                ))}
+              </span>
+            )}
             {p.filterCount > 0 && (
               <button
                 onClick={p.onClearFilters}
@@ -162,6 +203,7 @@ export function Workspace(p: Props) {
                 Clear {plural(p.filterCount, "filter")}
               </button>
             )}
+            <div className="toolbar min-w-0">
             <RerankToggle
               on={p.rerank}
               onChange={p.onRerank}
@@ -176,8 +218,29 @@ export function Workspace(p: Props) {
               }
               skipReason={data?.warnings.find((w) => w.startsWith("reranking skipped"))}
             />
-            {data && <TimingNote timing={data.timing} />}
+            {data && (
+              <ReviewActions
+                count={data.hits.length}
+                onTagAll={(tag) =>
+                  void p.tags.tagMany(
+                    data.hits.map((h) => ({ id: h.id, tags: tagsOf(h) })),
+                    tag,
+                  )
+                }
+                exportHref={
+                  isMock ? null : exportUrl({ q: data.query, filters: p.filters, rerank: p.rerank })
+                }
+                error={p.tags.error}
+              />
+            )}
+            {/* Timing is for the operator at a desk; on a phone it costs the row. */}
+            {data && (
+              <span className="hidden sm:contents">
+                <TimingNote timing={data.timing} />
+              </span>
+            )}
             <InsightsToggle on={insights.open} onChange={insights.toggle} />
+            </div>
           </div>
         </div>
 
@@ -200,7 +263,14 @@ export function Workspace(p: Props) {
                 : "xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.15fr)_0px]",
             ].join(" ")}
           >
-            <section className="scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain">
+            <section
+              aria-busy={p.loading || undefined}
+              className={[
+                "scroll-thin min-w-0 lg:overflow-y-auto lg:overscroll-contain",
+                // The last results stay put, stepped back, until the new ones land.
+                p.loading && data ? "stale" : "fresh",
+              ].join(" ")}
+            >
               {p.loading && !data ? (
                 <Skeleton />
               ) : !data ? null : p.lens === "emails" ? (
@@ -214,6 +284,7 @@ export function Workspace(p: Props) {
                       onOpen={p.onOpen}
                       isSaved={p.isSaved}
                       onToggleSave={p.onToggleSave}
+                      tagsFor={tagsOf}
                     />
                     {data.next_page_token && (
                       <div className="mt-4 flex justify-center">
@@ -250,6 +321,8 @@ export function Workspace(p: Props) {
                 onClose={() => p.onOpen(null)}
                 saved={p.open ? p.isSaved(p.open.id) : false}
                 onToggleSave={() => p.open && p.onToggleSave(p.open)}
+                tags={openTags}
+                onSetTags={setOpenTags}
               />
             </section>
 
@@ -272,6 +345,7 @@ export function Workspace(p: Props) {
                     onToggle={p.onToggleFilter}
                     onRange={p.onRange}
                     onAttachments={p.onAttachments}
+                    tagCounts={p.tags.counts}
                   />
                 </div>
               )}
@@ -305,6 +379,8 @@ export function Workspace(p: Props) {
                 onClose={() => p.onOpen(null)}
                 saved={p.isSaved(p.open.id)}
                 onToggleSave={() => p.open && p.onToggleSave(p.open)}
+                tags={openTags}
+                onSetTags={setOpenTags}
               />
             </motion.div>
           </div>
@@ -403,21 +479,17 @@ function RerankToggle({
       aria-pressed={on}
       title={title}
       aria-label={skipped ? "Rerank on, but skipped for this query" : "Rerank"}
-      style={on && !skipped ? { color: "var(--color-surface)" } : undefined}
-      className={[
-        "meta flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors",
-        skipped
-          ? "border-dashed border-[var(--color-ink)] text-[var(--color-ink)]"
-          : on
-            ? "border-[var(--color-ink)] bg-[var(--color-ink)]"
-            : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
-      ].join(" ")}
+      className={["tool", skipped ? "italic" : ""].join(" ")}
     >
-      <span
-        className={["size-1.5 rounded-full", state === "pending" ? "animate-pulse" : ""].join(" ")}
-        style={{
-          background: state === "applied" || state === "pending" ? "#c08a2e" : "var(--color-faint)",
+      <motion.span
+        className="size-1.5 rounded-full"
+        animate={{
+          scale: state === "applied" ? 1.25 : 1,
+          backgroundColor:
+            state === "applied" || state === "pending" ? "#c08a2e" : "var(--color-faint)",
         }}
+        transition={{ type: "spring", stiffness: 500, damping: 26 }}
+        style={state === "pending" ? { animation: "dot-pulse 1s ease-in-out infinite" } : undefined}
         aria-hidden
       />
       {skipped ? "Rerank skipped" : "Rerank"}
@@ -432,12 +504,7 @@ function InsightsToggle({ on, onChange }: { on: boolean; onChange: () => void })
       onClick={onChange}
       aria-pressed={on}
       title={on ? "Hide insights to give the email more room" : "Show insights"}
-      className={[
-        "meta hidden shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 transition-colors xl:flex",
-        on
-          ? "border-[var(--color-rule-strong)] text-[var(--color-ink)]"
-          : "border-[var(--color-rule)] hover:border-[var(--color-rule-strong)] hover:text-[var(--color-ink)]",
-      ].join(" ")}
+      className="tool hidden xl:inline-flex"
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
         <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" stroke="currentColor" strokeWidth="1.3" />

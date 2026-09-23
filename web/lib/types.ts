@@ -1,10 +1,10 @@
 /**
  * Wire types for the Ledger search API.
  *
- * These mirror the endpoint contract in docs/SPEC.md section 6. The
- * backend (Phase 2) is not built yet, so `lib/mock/engine.ts` implements the
- * same shapes in the browser. When the real API lands, only `lib/api.ts`
- * changes — every component here is already speaking the final contract.
+ * These mirror the endpoint contract in docs/SPEC.md section 6. `lib/adapt.ts`
+ * maps the FastAPI wire shapes onto them, and `lib/mock/engine.ts` implements
+ * the same shapes in the browser for fixture mode (NEXT_PUBLIC_USE_MOCK), so
+ * every component speaks one contract whichever source is live.
  */
 
 /** How the query parser classified one span of the raw query string. */
@@ -30,6 +30,13 @@ export interface ParsedQuery {
   free_text: string;
   phrases: string[];
   filters: SearchFilters;
+  /** Misspellings the API corrected before embedding the query (keyword search keeps the typo, fuzzily). */
+  corrections: Correction[];
+}
+
+export interface Correction {
+  original: string;
+  suggested: string;
 }
 
 export interface SearchFilters {
@@ -41,6 +48,8 @@ export interface SearchFilters {
   after?: string;
   before?: string;
   has_attachment?: boolean;
+  /** Review tags (any of them). */
+  tag?: string[];
 }
 
 /** Why a hit surfaced: its rank in each retrieval leg, and the fused score. */
@@ -82,6 +91,14 @@ export interface EmailHit {
    * the UI falls back to the folder. See DECISIONS.md D19.
    */
   topics: string[];
+  /** Review tags on this email (relevant, privileged, hot, ...). */
+  tags: string[];
+}
+
+/** A tag in use and how many emails carry it. */
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 /** A full email, as returned by GET /emails/{id}. */

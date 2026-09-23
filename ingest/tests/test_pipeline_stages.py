@@ -184,3 +184,159 @@ def test_embeddable_text_combines_subject_and_body() -> None:
     assert embeddable_text({"subject": "S", "body": "B"}) == "S\n\nB"
     assert embeddable_text({"subject": "S", "body": ""}) == "S"
     assert embeddable_text({"subject": "", "body": "B"}) == "B"
+
+
+def _threads(*docs: dict[str, Any]) -> dict[str, str]:
+    for i, doc in enumerate(docs):
+        doc.setdefault("id", f"id-{i}")
+    return {d["id"]: d["thread_id"] for d in assign_threads(list(docs), StageStats("thread"))}
+
+
+def test_repeated_sends_without_a_reply_prefix_are_not_a_thread() -> None:
+    alerts = [
+        _doc(subject="Schedule Crawler: HourAhead Failure", date=f"2002-02-05T{h:02d}:00:00+00:00")
+        for h in range(3)
+    ]
+    assert len(set(_threads(*alerts).values())) == 3
+
+
+def test_one_person_replying_to_two_people_makes_two_threads() -> None:
+    bill = _doc(
+        id="bill",
+        **{"from": "bill@enron.com"},
+        to=["vince@enron.com"],
+        subject="Congratulations",
+        date="2000-01-11T10:00:00+00:00",
+    )
+    john = _doc(
+        id="john",
+        **{"from": "john@enron.com"},
+        to=["vince@enron.com"],
+        subject="Congratulations",
+        date="2000-01-11T10:05:00+00:00",
+    )
+    to_bill = _doc(
+        id="to-bill",
+        **{"from": "vince@enron.com"},
+        to=["bill@enron.com"],
+        subject="Re: Congratulations",
+        date="2000-01-11T11:00:00+00:00",
+    )
+    to_john = _doc(
+        id="to-john",
+        **{"from": "vince@enron.com"},
+        to=["john@enron.com"],
+        subject="Re: Congratulations",
+        date="2000-01-11T11:05:00+00:00",
+    )
+    t = _threads(bill, john, to_bill, to_john)
+    assert t["bill"] == t["to-bill"]
+    assert t["john"] == t["to-john"]
+    assert t["bill"] != t["john"]
+
+
+def test_a_sender_following_up_or_forwarding_their_own_message_stays_in_thread() -> None:
+    first = _doc(id="first", subject="Gas Supply Proposal", to=["x@prpa.org"])
+    follow_up = _doc(
+        id="follow-up",
+        subject="RE: Gas Supply Proposal",
+        to=["x@prpa.org"],
+        date="2001-05-15T09:00:00+00:00",
+    )
+    forward = _doc(
+        id="forward",
+        subject="FW: Gas Supply Proposal",
+        to=["new@enron.com"],
+        date="2001-05-15T10:00:00+00:00",
+    )
+    t = _threads(first, follow_up, forward)
+    assert t["first"] == t["follow-up"] == t["forward"]
+
+
+def test_merely_sharing_a_participant_does_not_link() -> None:
+    a = _doc(id="a", **{"from": "a@enron.com"}, to=["hub@enron.com"], subject="Update")
+    b = _doc(
+        id="b",
+        **{"from": "b@enron.com"},
+        to=["hub@enron.com"],
+        subject="Re: Update",
+        date="2001-05-15T09:00:00+00:00",
+    )
+    t = _threads(a, b)
+    assert t["a"] != t["b"]
+
+
+# --------------------------- embed: re-runs --------------------------
+
+
+class _EncodingModel(_FakeModel):
+    """Counts what it is asked to embed, so a test can see vectors being reused."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.encoded: list[str] = []
+
+    def encode(self, texts: list[str], **_: Any) -> list[list[float]]:
+        self.encoded.extend(texts)
+        return [[float(len(t)), 0.0] for t in texts]
+
+
+def _embed(
+    tmp_path: Any, docs: list[dict[str, Any]], model: _EncodingModel
+) -> list[dict[str, Any]]:
+    from ingest import embed as embed_stage
+    from ingest.config import IngestSettings
+    from ingest.jsonl import read_jsonl
+
+    settings = IngestSettings(chunk_tokens=50, chunk_overlap=5, max_chunks=4)
+    out = tmp_path / "embedded.jsonl"
+    original = embed_stage.load_model
+    embed_stage.load_model = lambda name: model  # type: ignore[assignment,return-value]
+    try:
+        embed_stage.run(tmp_path / "unused.jsonl", out, settings, docs=[dict(d) for d in docs])
+    finally:
+        embed_stage.load_model = original
+    return list(read_jsonl(out))
+
+
+def test_a_rerun_takes_fresh_metadata_and_reuses_unchanged_vectors(tmp_path: Any) -> None:
+    doc = _doc(subject="Budget", body="one two three")
+    doc.update(id="d1", thread_id="old-thread")
+    first = _embed(tmp_path, [doc], _EncodingModel())
+
+    model = _EncodingModel()
+    second = _embed(tmp_path, [{**doc, "thread_id": "new-thread"}], model)
+    assert second[0]["thread_id"] == "new-thread", "metadata must come from the fresh input"
+    assert second[0]["chunks"] == first[0]["chunks"]
+    assert model.encoded == [], "unchanged text must not be re-embedded"
+
+
+RSQUO = "\u2019"
+
+
+def test_a_rerun_re_embeds_a_document_whose_text_changed(tmp_path: Any) -> None:
+    doc = _doc(subject="Budget", body="Enron\x01,s plan")
+    doc["id"] = "d1"
+    _embed(tmp_path, [doc], _EncodingModel())
+
+    model = _EncodingModel()
+    out = _embed(tmp_path, [{**doc, "body": f"Enron{RSQUO}s plan"}], model)
+    assert model.encoded, "changed text must be re-embedded"
+    assert f"Enron{RSQUO}s" in out[0]["chunks"][0]["text"]
+
+
+def test_an_interrupted_run_resumes_without_redoing_written_rows(tmp_path: Any) -> None:
+    import json
+
+    a, b = _doc(body="alpha text"), _doc(body="beta text")
+    a["id"], b["id"] = "a", "b"
+    # A previous run died after writing row "a" to the partial file.
+    partial = tmp_path / "embedded.jsonl.partial"
+    partial.write_text(json.dumps({**a, "chunks": [{"text": "kept", "vector": [1.0]}]}) + "\n")
+
+    model = _EncodingModel()
+    out = _embed(tmp_path, [a, b], model)
+    assert [r["id"] for r in out] == ["a", "b"]
+    assert out[0]["chunks"][0]["text"] == "kept"
+    assert not partial.exists(), "a completed run replaces the output"
+    assert all("alpha" not in t for t in model.encoded)

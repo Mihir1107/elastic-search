@@ -128,7 +128,8 @@ export function parse(input: string): ParsedQuery {
     free.push(t.value);
   }
 
-  return { tokens, free_text: free.join(" "), phrases, filters };
+  // Spelling corrections come from the server's index; the client parser has none.
+  return { tokens, free_text: free.join(" "), phrases, filters, corrections: [] };
 }
 
 /** True when the query carries no retrievable content (only empty operators). */
@@ -166,6 +167,7 @@ export function compactFilters(f: SearchFilters): SearchFilters {
   if (f.after) out.after = f.after;
   if (f.before) out.before = f.before;
   if (typeof f.has_attachment === "boolean") out.has_attachment = f.has_attachment;
+  if (f.tag?.length) out.tag = f.tag;
   return out;
 }
 
@@ -178,6 +180,7 @@ export function countFilters(f: SearchFilters): number {
     (c.folder?.length ?? 0) +
     (c.after ? 1 : 0) +
     (c.before ? 1 : 0) +
-    (typeof c.has_attachment === "boolean" ? 1 : 0)
+    (typeof c.has_attachment === "boolean" ? 1 : 0) +
+    (c.tag?.length ?? 0)
   );
 }

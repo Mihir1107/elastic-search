@@ -107,8 +107,9 @@ services:
       - certs:/usr/share/elasticsearch/config/certs
       - esdata01:/usr/share/elasticsearch/data
       - snapshots:/snapshots
+    # Published on loopback only: the host clients need the port, the LAN does not.
     ports:
-      - ${ES_PORT}:9200
+      - 127.0.0.1:${ES_PORT}:9200
     environment:
       - node.name=es01
       - cluster.name=${CLUSTER_NAME}
@@ -152,7 +153,7 @@ services:
       - esdata02:/usr/share/elasticsearch/data
       - snapshots:/snapshots
     ports:
-      - 9201:9200
+      - 127.0.0.1:9201:9200
     environment:
       - node.name=es02
       - cluster.name=${CLUSTER_NAME}
@@ -201,7 +202,7 @@ services:
       - esdata03:/usr/share/elasticsearch/data
       - snapshots:/snapshots
     ports:
-      - 9202:9200
+      - 127.0.0.1:9202:9200
     environment:
       - node.name=es03
       - cluster.name=${CLUSTER_NAME}
@@ -252,7 +253,7 @@ services:
       - esdata-single:/usr/share/elasticsearch/data
       - snapshots:/snapshots
     ports:
-      - ${ES_PORT}:9200
+      - 127.0.0.1:${ES_PORT}:9200
     environment:
       - node.name=es-single
       - cluster.name=${CLUSTER_NAME}
@@ -296,7 +297,7 @@ services:
       - certs:/usr/share/kibana/config/certs
       - kibanadata:/usr/share/kibana/data
     ports:
-      - 5601:5601
+      - 127.0.0.1:5601:5601
     environment:
       - SERVERNAME=kibana
       - ELASTICSEARCH_HOSTS=https://es01:9200

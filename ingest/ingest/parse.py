@@ -58,6 +58,19 @@ def split_quoted(body: str) -> tuple[str, str]:
     return "\n".join(lines[:cut]).strip(), "\n".join(lines[cut:]).strip()
 
 
+_FORWARD_PREFIX = re.compile(r"^\s*(?:(?:re|aw|sv)\s*:\s*)*(?:fw|fwd)\s*:", re.IGNORECASE)
+
+
+def is_forward(subject: str) -> bool:
+    """True when the subject's prefix chain includes Fw:/Fwd:."""
+    return bool(_FORWARD_PREFIX.match(subject or ""))
+
+
+def is_reply_or_forward(subject: str) -> bool:
+    """True when the subject carries a Re:/Fw:/Fwd: prefix."""
+    return bool(_RE_PREFIX.match(subject or ""))
+
+
 def normalise_subject(subject: str) -> str:
     """Strip Re:/Fw:/Fwd: prefixes and collapse whitespace (for thread fallback)."""
     return _WS.sub(" ", _RE_PREFIX.sub("", subject or "")).strip()
@@ -112,15 +125,29 @@ def _parse_date(raw: str) -> tuple[str | None, str | None]:
     return dt.astimezone(UTC).isoformat(), None
 
 
-#: The CALO release carries mangled smart punctuation: the original character
-#: survives as a control byte followed by an ASCII tail, so an apostrophe reads
-#: as "Enron\x01,s" and renders as "Enron ,s". Measured on the dev corpus: 131
-#: of 20,001 documents, mostly this apostrophe plus runs of NUL padding.
-#: Repaired here rather than at display time so the indexed text is right too.
+#: The CALO release carries Lotus Notes-mangled punctuation: the original
+#: character survives as a control byte followed by an ASCII tail, so an
+#: apostrophe reads as "Enron\x01,s" and renders as "Enron ,s". Each mapping
+#: below was read off its contexts in the 52k-document corpus (DECISIONS D33):
+#: "\x01&reality checks\x018" is a pair of curly double quotes, "LONDON \x01) A
+#: futures trader" is a dash, "\x01\x07 Establish Hector Road" opens a bullet.
+#: Counts are occurrences across that corpus. Anything unlisted loses its
+#: control byte below, which is no worse than before.
 _MOJIBAKE = (
-    ("\x01,", "\u2019"),  # right single quote  -> Enron's
+    ("\x01,", "\u2019"),  # 1,673  right single quote / apostrophe: Enron's
+    ("\x01%", "\u2019"),  #     9  same character, rarer tail: don't
+    ("\x02\x07", "\u2019"),  #  14  same character, second encoding: FERC's
     ("\x01'", "\u2019"),
-    ("\x018", "\u2019"),  # same source character, different mangled tail
+    ("\x01+", "\u2018"),  #    46  left single quote: 'Digital Storm'
+    ("\x01&", "\u201c"),  #   312  left double quote
+    ("\x018", "\u201d"),  #   307  right double quote
+    ("\x01)", "\u2014"),  #   608  dash: LONDON -- A futures trader
+    ("\x01*", "\u2014"),  #    96  dash: floors -- the company's nerve centers
+    ("\x01(", "\u2014"),  #   111  dash: TurboTax 2000 -- does this still work?
+    ("\x01\x07", "\u2022"),  #  81  bullet at the start of a list item
+    ("\x01 ", "\u2022 "),  #    10  bullet, space-separated
+    ("\x01v", "\u2122"),  #    27  trade mark: SourceIT(TM)
+    ("\x01;", " "),  #   305  a space: "reach you\x01; about"
 )
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
@@ -201,7 +228,8 @@ def parse_message(path: Path, maildir: Path) -> dict[str, Any]:
         "to": to_addrs,
         "cc": cc_addrs,
         "bcc": bcc_addrs,
-        "subject": _header(msg, "Subject"),
+        # Subjects carry the same Lotus Notes damage as bodies (12 in the 52k set).
+        "subject": clean_text(_header(msg, "Subject")),
         "date": date_iso,
         "date_raw": _header(msg, "Date"),
         "body": body,

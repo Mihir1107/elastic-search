@@ -128,14 +128,26 @@ class EmailTags(BaseModel):
     tags: list[str]
 
 
+#: Bounds on request bodies, checked before any of it reaches Elasticsearch.
+_MAX_TAG_ITEMS = 64
+_MAX_BATCH_IDS = 500
+
+
 class SetTagsRequest(BaseModel):
-    tags: list[str]
+    tags: list[str] = Field(max_length=_MAX_TAG_ITEMS)
+
+
+class ChangeTagsRequest(BaseModel):
+    """Tags to add to and remove from one email, applied atomically."""
+
+    add: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+    remove: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
 
 
 class BatchTagsRequest(BaseModel):
-    ids: list[str]
-    add: list[str] = []
-    remove: list[str] = []
+    ids: list[str] = Field(max_length=_MAX_BATCH_IDS)
+    add: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
+    remove: list[str] = Field(default=[], max_length=_MAX_TAG_ITEMS)
 
 
 class BatchTagsResponse(BaseModel):

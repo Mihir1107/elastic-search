@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request
@@ -11,6 +12,12 @@ from app.models import HealthResponse
 
 router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/livez")
+async def livez() -> dict[str, str]:
+    """Liveness: the process answers. Touches nothing, so it is cheap and keyless."""
+    return {"status": "ok"}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -29,14 +36,17 @@ async def health(request: Request) -> HealthResponse:
         es = getattr(state, "es", None)
         if es is None:
             raise RuntimeError("elasticsearch client not initialised")
-        cluster = await es.cluster.health()
+        # Independent reads: one round trip of latency, not three.
+        cluster, aliases, counted = await asyncio.gather(
+            es.cluster.health(),
+            es.indices.get_alias(name=settings.emails_alias),
+            es.count(index=settings.emails_alias),
+        )
         response.elasticsearch = str(cluster["status"])
         response.cluster_name = str(cluster["cluster_name"])
         response.number_of_nodes = int(cluster["number_of_nodes"])
         response.active_shards = int(cluster.get("active_shards", 0))
-        aliases = await es.indices.get_alias(name=settings.emails_alias)
         response.active_index = sorted(aliases.keys())
-        counted = await es.count(index=settings.emails_alias)
         response.docs = int(counted["count"])
         if response.elasticsearch == "red" or not response.active_index:
             response.status = "degraded"

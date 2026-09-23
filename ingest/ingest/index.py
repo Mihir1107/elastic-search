@@ -76,8 +76,24 @@ def bulk_index(
     allowed: set[str],
     stats: StageStats,
 ) -> None:
-    """Bulk with refresh disabled for throughput, restoring the setting afterwards."""
-    es.indices.put_settings(index=index, settings={"index": {"refresh_interval": "-1"}})
+    """Bulk with refresh and replicas off for throughput, then restore both.
+
+    Replicas would otherwise index every document a second time while the bulk
+    runs; recovering them from the finished primary afterwards is a file copy.
+    The previous values are read back rather than assumed, so a mapping file
+    that sets its own refresh interval or replica count keeps it.
+    """
+    current = es.indices.get_settings(
+        index=index, name=["index.refresh_interval", "index.number_of_replicas"]
+    )
+    prior = current.get(index, {}).get("settings", {}).get("index", {})
+    restore = {
+        "refresh_interval": prior.get("refresh_interval"),  # None resets to default
+        "number_of_replicas": prior.get("number_of_replicas", "1"),
+    }
+    es.indices.put_settings(
+        index=index, settings={"index": {"refresh_interval": "-1", "number_of_replicas": 0}}
+    )
     try:
         for success, info in parallel_bulk(
             es,
@@ -98,7 +114,7 @@ def bulk_index(
                         reason = str(error.get("type", "unknown"))
                 stats.fail(f"bulk:{reason}")
     finally:
-        es.indices.put_settings(index=index, settings={"index": {"refresh_interval": "1s"}})
+        es.indices.put_settings(index=index, settings={"index": restore})
         es.indices.refresh(index=index)
 
 

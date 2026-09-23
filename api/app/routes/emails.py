@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from elasticsearch import NotFoundError
 from fastapi import APIRouter, HTTPException, Request
 
@@ -17,11 +19,15 @@ router = APIRouter(tags=["emails"])
 async def get_email(request: Request, email_id: str) -> EmailDetail:
     es = get_es(request)
     settings = get_settings_from(request)
+    # The document and its tags are independent reads: fetch them together.
     try:
-        doc = await es.get(index=settings.emails_alias, id=email_id, source_excludes=["chunks"])
+        doc, tags = await asyncio.gather(
+            es.get(index=settings.emails_alias, id=email_id, source_excludes=["chunks"]),
+            get_tags(es, settings.tags_index, [email_id]),
+        )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"email {email_id} not found") from exc
     source = dict(doc["_source"])
     source["from_name"] = display_name(str(source.get("from_name") or ""))
-    source["tags"] = (await get_tags(es, settings.tags_index, [email_id])).get(email_id, [])
+    source["tags"] = tags.get(email_id, [])
     return EmailDetail(id=email_id, **source)

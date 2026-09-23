@@ -5,10 +5,20 @@ rc=0
 echo "== Ledger preflight =="
 
 if [ ! -f .env ]; then
-  cp .env.example .env
-  echo "• created .env from .env.example (CHANGE THE PASSWORDS before real use)"
+  # Never start a cluster on the example passwords: generate real ones.
+  sed -e "s/^ELASTIC_PASSWORD=.*/ELASTIC_PASSWORD=$(openssl rand -hex 16)/" \
+      -e "s/^KIBANA_PASSWORD=.*/KIBANA_PASSWORD=$(openssl rand -hex 16)/" \
+      .env.example > .env
+  chmod 600 .env
+  echo "• created .env from .env.example with generated passwords"
 else
   echo "• .env present"
+  if grep -qE '^(ELASTIC|KIBANA)_PASSWORD=changeme' .env; then
+    # Only a warning: an existing cluster was bootstrapped with this password,
+    # and changing .env alone would lock the clients out of it.
+    echo "! .env still uses a default 'changeme' password. Rotate it with"
+    echo "    POST /_security/user/elastic/_password, then update .env"
+  fi
 fi
 
 if command -v uv >/dev/null 2>&1; then

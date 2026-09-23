@@ -14,6 +14,7 @@ import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from app.search.embedder import gated
 from app.search.fusion import FusedHit
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ def rerank(
 
     model = get_reranker(model_name)
     pairs = [(query_text, document_text(hit)) for hit in head]
-    scores: Any = model.predict(pairs, show_progress_bar=False)
+    scores: Any = gated(lambda: model.predict(pairs, show_progress_bar=False))
 
     for hit, score in zip(head, scores, strict=True):
         hit.score = float(score)

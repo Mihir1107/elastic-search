@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from collections.abc import AsyncIterator, Iterable
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
+from app.models import SearchResponse
 from app.routes.deps import get_es, get_settings_from
 from app.routes.search import structured_filters
 from app.search.builder import StructuredFilters, build_bm25_query
@@ -35,6 +37,7 @@ from app.search.service import resolve_filters, run_search
 from app.tags import get_tags
 
 router = APIRouter(tags=["export"])
+logger = logging.getLogger(__name__)
 
 EXPORT_MAX = 50_000
 _PAGE = 1_000
@@ -72,9 +75,15 @@ async def export(
     headers = {"content-disposition": f'attachment; filename="ledger-export-{stamp}.csv"'}
 
     if parsed.has_text:
+        # The first page runs before the response starts, so a failing search
+        # is an error status rather than a 200 with an empty file -- and its
+        # total says whether the ranked list is cut short by the fusion window.
+        first = await run_search(
+            es, settings, q=q, size=settings.max_page_size, rerank=rerank, structured=structured
+        )
         headers["x-ledger-export-mode"] = "ranked"
-        headers["x-ledger-export-truncated"] = "false"
-        rows = _ranked_rows(request, q, rerank, structured)
+        headers["x-ledger-export-truncated"] = str(first.total > settings.fusion_window).lower()
+        rows = _ranked_rows(request, q, rerank, structured, first)
     else:
         filters, _ = await resolve_filters(es, settings, parsed, structured)
         query = build_bm25_query(parsed, filters)
@@ -85,19 +94,38 @@ async def export(
 
     async def body() -> AsyncIterator[str]:
         yield _csv_line(COLUMNS)
-        async for row in rows:
-            yield _csv_line(row)
+        try:
+            async for row in rows:
+                yield _csv_line(row)
+        except Exception as exc:
+            # The status line has gone out already; the only way left to say
+            # the file is incomplete is inside it. A reviewer must never take a
+            # partial export for the whole set.
+            logger.exception("export failed part-way")
+            yield _csv_line(["ERROR", f"export incomplete: {type(exc).__name__}"])
 
     return StreamingResponse(body(), media_type="text/csv; charset=utf-8", headers=headers)
 
 
 async def _ranked_rows(
-    request: Request, q: str, rerank: bool | None, structured: StructuredFilters
+    request: Request,
+    q: str,
+    rerank: bool | None,
+    structured: StructuredFilters,
+    first: SearchResponse,
 ) -> AsyncIterator[list[Any]]:
     es, settings = get_es(request), get_settings_from(request)
-    token: str | None = None
+    page = first
     rank = 0
     while True:
+        for hit in page.hits:
+            rank += 1
+            data = hit.model_dump(by_alias=True)
+            yield [rank, hit.id, *(data.get(f) for f in _FIELDS), hit.tags]
+        token = page.next_page_token
+        if not token:
+            return
+        # Later pages come from the fused list the first one cached.
         page = await run_search(
             es,
             settings,
@@ -107,13 +135,6 @@ async def _ranked_rows(
             rerank=rerank,
             structured=structured,
         )
-        for hit in page.hits:
-            rank += 1
-            data = hit.model_dump(by_alias=True)
-            yield [rank, hit.id, *(data.get(f) for f in _FIELDS), hit.tags]
-        token = page.next_page_token
-        if not token:
-            return
 
 
 async def _filtered_rows(request: Request, query: dict[str, Any]) -> AsyncIterator[list[Any]]:

@@ -113,3 +113,38 @@ def test_export_of_a_text_query_is_the_ranked_list_in_order(client: TestClient) 
     rows = _csv(res.text)
     assert [r["id"] for r in rows[:20]] == shown
     assert [int(r["rank"]) for r in rows] == list(range(1, len(rows) + 1))
+
+
+def test_atomic_changes_keep_a_concurrent_reviewers_edit(client: TestClient) -> None:
+    """Two reviewers editing one email: both edits survive, unlike a replace."""
+    email_id = _ids(client, "enron stock price", 1)[0]
+    a = client.patch(
+        f"/emails/{email_id}/tags", json={"add": ["hot"]}, headers={"x-ledger-user": "ann"}
+    )
+    b = client.patch(f"/emails/{email_id}/tags", json={"add": ["relevant"]})
+    assert a.json()["tags"] == ["hot"]
+    assert b.json()["tags"] == ["hot", "relevant"]
+    assert client.get(f"/emails/{email_id}").json()["tags"] == ["hot", "relevant"]
+    gone = client.patch(f"/emails/{email_id}/tags", json={"remove": ["hot", "relevant"]})
+    assert gone.json()["tags"] == []
+    # Removing from an untagged email is a no-op, not an error.
+    assert client.patch(f"/emails/{email_id}/tags", json={"remove": ["hot"]}).json()["tags"] == []
+
+
+def test_a_tag_change_is_seen_by_the_next_page_of_a_tag_filter(client: TestClient) -> None:
+    """Cached pages are keyed on the tag generation, so a write invalidates them."""
+    ids = _ids(client, "natural gas storage", 3)
+    client.post("/tags/batch", json={"ids": ids[:1], "add": ["cache-check"]})
+    first = client.get("/search", params={"tag": "cache-check", "size": 1}).json()
+    assert first["total"] == 1
+    client.post("/tags/batch", json={"ids": ids, "add": ["cache-check"]})
+    again = client.get("/search", params={"tag": "cache-check", "size": 1}).json()
+    assert again["total"] == 3
+    token = again["next_page_token"]
+    page_two = client.get("/search", params={"tag": "cache-check", "size": 1, "page_token": token})
+    assert page_two.json()["total"] == 3
+
+
+def test_ranked_export_says_when_the_window_cut_it_short(client: TestClient) -> None:
+    res = client.get("/export", params={"q": "energy"})  # matches far more than the window
+    assert res.headers["x-ledger-export-truncated"] == "true"

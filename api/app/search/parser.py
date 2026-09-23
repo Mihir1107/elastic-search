@@ -27,6 +27,8 @@ from datetime import date
 
 MAX_QUERY_CHARS = 512
 MAX_TERMS = 32
+#: Each phrase is two match_phrase clauses on each retrieval leg.
+MAX_PHRASES = 8
 MAX_VALUES_PER_FIELD = 16
 
 #: Fuzziness only applies to terms of 5+ characters. Elasticsearch's
@@ -185,6 +187,11 @@ def parse(raw: str) -> ParsedQuery:
     if after and before and after > before:
         warnings.append("after: is later than before:; the range matches nothing")
 
+    phrases = [p for p in phrases if p]
+    if len(phrases) > MAX_PHRASES:
+        phrases = phrases[:MAX_PHRASES]
+        warnings.append(f"only the first {MAX_PHRASES} quoted phrases were used")
+
     if len(terms) > MAX_TERMS:
         terms = terms[:MAX_TERMS]
         warnings.append(f"only the first {MAX_TERMS} free-text terms were used")
@@ -193,7 +200,7 @@ def parse(raw: str) -> ParsedQuery:
         raw=original,
         text=" ".join(terms),
         terms=tuple(terms),
-        phrases=tuple(p for p in phrases if p),
+        phrases=tuple(phrases),
         from_=tuple(buckets["from"]),
         to=tuple(buckets["to"]),
         cc=tuple(buckets["cc"]),

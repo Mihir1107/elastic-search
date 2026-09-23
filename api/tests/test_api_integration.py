@@ -385,3 +385,32 @@ def test_every_hit_is_hydrated_with_its_document_fields(client: TestClient) -> N
     for hit in body["hits"]:
         assert hit["message_id"] and hit["date"] and hit["from"]
         assert hit["snippets"], hit["id"]
+
+
+def test_suggest_finds_senders_whatever_the_subjects_say(client: TestClient) -> None:
+    """People come from the sender field, not from emails whose subject matched."""
+    body = client.get("/suggest", params={"prefix": "kenneth.lay"}).json()
+    people = [s["value"] for s in body["suggestions"] if s["kind"] == "person"]
+    assert people and all(p.startswith("kenneth.lay") for p in people)
+
+
+def test_later_pages_reuse_the_first_pages_ranking(client: TestClient) -> None:
+    """Page two comes from the cached fused list: no retrieval is re-run."""
+    first = client.get("/search", params={"q": "california power", "size": 10}).json()
+    second = client.get(
+        "/search",
+        params={"q": "california power", "size": 10, "page_token": first["next_page_token"]},
+    ).json()
+    assert second["timings"]["bm25_ms"] == 0 and second["timings"]["knn_ms"] == 0
+    assert not {h["id"] for h in first["hits"]} & {h["id"] for h in second["hits"]}
+
+
+def test_thread_messages_carry_display_names_and_tags(client: TestClient) -> None:
+    hit = next(
+        h
+        for h in client.get("/search", params={"q": "meeting", "size": 20}).json()["hits"]
+        if h["thread_id"]
+    )
+    messages = client.get(f"/threads/{hit['thread_id']}").json()["messages"]
+    assert all("tags" in m for m in messages)
+    assert not any("/O=" in (m["from_name"] or "") for m in messages)
